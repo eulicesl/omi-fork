@@ -135,8 +135,16 @@ backend/scripts/rag/visualizations/
 */pretrained_models/
 /backend/_speech_profiles
 
-backend/google-credentials.json
-backend/google-credentials-dev.json
+# Credentials and secrets
+google-credentials*.json
+**/google-credentials*.json
+backend/google-credentials*.json
+*-credentials.json
+*.keystore
+*.pem
+*.p12
+*.jks
+*.key
 
 startup-script.sh
 /app/lib/firebase_options_dev.dart
