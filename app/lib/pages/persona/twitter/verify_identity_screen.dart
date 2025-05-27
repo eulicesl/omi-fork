@@ -46,30 +46,31 @@ class _VerifyIdentityScreenState extends State<VerifyIdentityScreen> {
     });
     var provider = context.read<PersonaProvider>();
     String? handle = provider.twitterProfile['profile'];
-    if (handle == null) {
-      return;
-    }
 
     // username
-    String? username = provider.twitterProfile['persona_username'];
-    username ??= handle;
+    String? usernameTemp = provider.twitterProfile['persona_username'];
+    usernameTemp ??= handle;
+    String username =
+        usernameTemp ?? 'user'; // Fallback to 'user' if both are null
     if (username.startsWith("@")) {
       username = username.substring(1);
     }
     provider.updateUsername(username);
 
-    final tweetText = Uri.encodeComponent('Verifying my clone($username): https://personas.omi.me/u/$username');
+    final tweetText = Uri.encodeComponent(
+        'Verifying my clone($username): https://personas.omi.me/u/$username');
     final twitterUrl = 'https://twitter.com/intent/tweet?text=$tweetText';
     setPostTweetClicked(true);
     await Posthog().capture(eventName: 'post_tweet_clicked', properties: {
-      'x_handle': handle,
+      'x_handle': handle ?? '',
       'persona_username': username,
     });
     setState(() {
       _isLoading = false;
     });
     if (await canLaunchUrl(Uri.parse(twitterUrl))) {
-      await launchUrl(Uri.parse(twitterUrl), mode: LaunchMode.externalApplication);
+      await launchUrl(Uri.parse(twitterUrl),
+          mode: LaunchMode.externalApplication);
     }
   }
 
@@ -86,7 +87,8 @@ class _VerifyIdentityScreenState extends State<VerifyIdentityScreen> {
       final isVerified = await context.read<PersonaProvider>().verifyTweet();
       if (isVerified) {
         final message = await getPersonaInitialMessage(username);
-        await Posthog().capture(eventName: 'tweet_verified', properties: {'x_handle': handle});
+        await Posthog().capture(
+            eventName: 'tweet_verified', properties: {'x_handle': handle});
         SharedPreferencesUtil().hasPersonaCreated = true;
         routeToPage(
             context,
@@ -245,7 +247,8 @@ class _VerifyIdentityScreenState extends State<VerifyIdentityScreen> {
                         Column(
                           children: [
                             Text(
-                              tryDecodingText(provider.twitterProfile['name'] ?? ""),
+                              tryDecodingText(
+                                  provider.twitterProfile['name'] ?? ""),
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.78),
                                 fontSize: 20,
@@ -284,11 +287,14 @@ class _VerifyIdentityScreenState extends State<VerifyIdentityScreen> {
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white),
                                   ),
                                 )
                               : Text(
-                                  postTweetClicked ? "Check my tweet" : "Verify it's me",
+                                  postTweetClicked
+                                      ? "Check my tweet"
+                                      : "Verify it's me",
                                   style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,

@@ -53,7 +53,6 @@ class _ProfilePageState extends State<ProfilePage> {
     required String subtitle,
     required Widget iconWidget,
     required VoidCallback onTap,
-    Color iconColor = Colors.white,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),

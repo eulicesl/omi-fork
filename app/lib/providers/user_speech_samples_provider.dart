@@ -18,26 +18,9 @@ class UserSpeechSamplesProvider extends BaseProvider {
     loading = true;
     notifyListeners();
     String? url = await getUserSpeechProfile();
-    if (url == null) {
-      // showDialog(
-      //   context: context,
-      //   builder: (c) => getDialog(
-      //     context,
-      //     () {
-      //       Navigator.of(context).pop();
-      //       Navigator.of(context).pop();
-      //     },
-      //     () {},
-      //     'Unexpected error',
-      //     'Failed to get profile samples. Please try again later.',
-      //     okButtonText: 'Ok',
-      //     singleButton: true,
-      //   ),
-      // );
-      loading = false;
-      return;
+    if (url != null) {
+      samplesUrl.add(url);
     }
-    samplesUrl.add(url);
     List<String> expandedSamples = await getExpandedProfileSamples();
     samplesUrl.addAll(expandedSamples);
     loading = false;

@@ -75,7 +75,8 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
       itemBuilder: (context, idx) {
         // Handle header and footer items
         if (idx == 0) return SizedBox(height: widget.topMargin ? 32 : 0);
-        if (idx == widget.segments.length + 1) return SizedBox(height: widget.bottomMargin);
+        if (idx == widget.segments.length + 1)
+          return SizedBox(height: widget.bottomMargin);
 
         // Add separator before the item (except for the first one)
         if (widget.separator && idx > 1) {
@@ -95,11 +96,12 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
 
   Widget _buildSegmentItem(int segmentIdx) {
     final data = widget.segments[segmentIdx];
-    final Person? person = data.personId != null ? _getPersonById(data.personId) : null;
+    final Person? person =
+        data.personId != null ? _getPersonById(data.personId) : null;
 
     return Padding(
-      padding:
-          EdgeInsetsDirectional.fromSTEB(widget.horizontalMargin ? 16 : 0, 0.0, widget.horizontalMargin ? 16 : 0, 0.0),
+      padding: EdgeInsetsDirectional.fromSTEB(widget.horizontalMargin ? 16 : 0,
+          0.0, widget.horizontalMargin ? 16 : 0, 0.0),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -151,7 +153,8 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
                 children: [
                   Text(
                     _getDecodedText(data.text),
-                    style: const TextStyle(letterSpacing: 0.0, color: Colors.grey),
+                    style:
+                        const TextStyle(letterSpacing: 0.0, color: Colors.grey),
                     textAlign: TextAlign.left,
                   ),
                   if (data.translations.isNotEmpty) ...[
@@ -160,7 +163,8 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
                             _getDecodedText(translation.text),
-                            style: const TextStyle(letterSpacing: 0.0, color: Colors.grey),
+                            style: const TextStyle(
+                                letterSpacing: 0.0, color: Colors.grey),
                             textAlign: TextAlign.left,
                           ),
                         )),
@@ -239,7 +243,8 @@ class LiteTranscriptWidget extends StatelessWidget {
   static String? _processText(List<TranscriptSegment> segments) {
     if (segments.isEmpty) return null;
 
-    var text = getLastTranscript(segments, maxCount: 70, includeTimestamps: false);
+    var text =
+        getLastTranscript(segments, maxCount: 70, includeTimestamps: false);
     return text.replaceAll(RegExp(r"\s+|\n+"), " ");
   }
 
@@ -253,7 +258,10 @@ class LiteTranscriptWidget extends StatelessWidget {
       _cachedText!,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: Colors.grey.shade300, height: 1.3),
+      style: Theme.of(context)
+          .textTheme
+          .bodyMedium!
+          .copyWith(color: Colors.grey.shade300, height: 1.3),
       textAlign: TextAlign.right,
     );
   }
@@ -262,9 +270,11 @@ class LiteTranscriptWidget extends StatelessWidget {
 String getLastTranscript(List<TranscriptSegment> transcriptSegments,
     {int? maxCount, bool generate = false, bool includeTimestamps = true}) {
   var transcript = TranscriptSegment.segmentsAsString(
-      transcriptSegments.sublist(transcriptSegments.length >= 50 ? transcriptSegments.length - 50 : 0),
+      transcriptSegments.sublist(
+          transcriptSegments.length >= 50 ? transcriptSegments.length - 50 : 0),
       includeTimestamps: includeTimestamps);
-  if (maxCount != null) transcript = transcript.substring(max(transcript.length - maxCount, 0));
+  if (maxCount != null)
+    transcript = transcript.substring(max(transcript.length - maxCount, 0));
   return tryDecodingText(transcript);
 }
 

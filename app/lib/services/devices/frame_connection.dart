@@ -263,7 +263,9 @@ class FrameDeviceConnection extends DeviceConnection {
   }
 
   @override
-  Future<StreamSubscription?> performGetBleButtonListener({required void Function(List<int>) onButtonReceived}) async {}
+  Future<StreamSubscription?> performGetBleButtonListener({required void Function(List<int>) onButtonReceived}) async {
+    return null;
+  }
 
   @override
   Future<StreamSubscription?> performGetBleAudioBytesListener(

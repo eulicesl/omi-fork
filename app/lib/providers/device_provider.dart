@@ -161,7 +161,7 @@ class DeviceProvider extends ChangeNotifier implements IDeviceServiceSubsciption
     });
   }
 
-  Future<BtDevice?> _scanAndConnectDevice({bool autoConnect = true, bool timeout = false}) async {
+  Future<BtDevice?> _scanAndConnectDevice({bool timeout = false}) async {
     var device = await _getConnectedDevice();
     if (device != null) {
       return device;

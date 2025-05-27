@@ -347,7 +347,7 @@ class OmiDeviceConnection extends DeviceConnection {
                     (storageValue[baseIndex + 1] << 8) |
                     (storageValue[baseIndex + 2] << 16) |
                     (storageValue[baseIndex + 3] << 24)) &
-                0xFFFFFFFF as int)
+                0xFFFFFFFF)
             .toSigned(32);
         storageLengths.add(result);
       }
