@@ -25,7 +25,9 @@ build/
 dist/
 .build/
 .swiftpm/
-.vscode/
+
+# VS Code
+.vscode/*
 
 # Android specific
 **/android/**/build/
@@ -191,3 +193,4 @@ omiGlass/.expo
 
 # Logs
 /backend/logs/
+app/.fvm/
