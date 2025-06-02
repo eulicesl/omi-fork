@@ -62,8 +62,7 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
     apps = prefs.appsList;
     scrollController = ScrollController();
     scrollController.addListener(() {
-      if (scrollController.position.userScrollDirection ==
-          ScrollDirection.reverse) {
+      if (scrollController.position.userScrollDirection == ScrollDirection.reverse) {
         if (!isScrollingDown) {
           isScrollingDown = true;
           setState(() {});
@@ -78,8 +77,7 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
         }
       }
 
-      if (scrollController.position.userScrollDirection ==
-          ScrollDirection.forward) {
+      if (scrollController.position.userScrollDirection == ScrollDirection.forward) {
         if (isScrollingDown) {
           isScrollingDown = false;
           setState(() {});
@@ -136,8 +134,7 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                         children: [
                           const SizedBox(height: 100),
                           const CircularProgressIndicator(
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                           const SizedBox(height: 16),
                           Text(
@@ -151,8 +148,7 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                             children: [
                               SizedBox(height: 100),
                               CircularProgressIndicator(
-                                valueColor:
-                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                               ),
                               SizedBox(height: 16),
                               Text(
@@ -170,8 +166,7 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                           ? 'No messages yet!\nWhy don\'t you start a conversation?'
                                           : 'Please check your internet connection and try again',
                                       textAlign: TextAlign.center,
-                                      style:
-                                          const TextStyle(color: Colors.white)),
+                                      style: const TextStyle(color: Colors.white)),
                                 ),
                               )
                             : ListView.builder(
@@ -182,28 +177,17 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                 itemCount: provider.messages.length,
                                 itemBuilder: (context, chatIndex) {
                                   final message = provider.messages[chatIndex];
-                                  double topPadding =
-                                      chatIndex == provider.messages.length - 1
-                                          ? 24
-                                          : 16;
+                                  double topPadding = chatIndex == provider.messages.length - 1 ? 24 : 16;
                                   if (chatIndex != 0) message.askForNps = false;
 
                                   double bottomPadding = chatIndex == 0
                                       ? provider.selectedFiles.isNotEmpty
                                           ? (Platform.isAndroid
-                                              ? MediaQuery.sizeOf(context)
-                                                      .height *
-                                                  0.32
-                                              : MediaQuery.sizeOf(context)
-                                                      .height *
-                                                  0.3)
+                                              ? MediaQuery.sizeOf(context).height * 0.32
+                                              : MediaQuery.sizeOf(context).height * 0.3)
                                           : (Platform.isAndroid
-                                              ? MediaQuery.sizeOf(context)
-                                                      .height *
-                                                  0.21
-                                              : MediaQuery.sizeOf(context)
-                                                      .height *
-                                                  0.19)
+                                              ? MediaQuery.sizeOf(context).height * 0.21
+                                              : MediaQuery.sizeOf(context).height * 0.19)
                                       : 0;
                                   return GestureDetector(
                                     onLongPress: () {
@@ -217,51 +201,33 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                         builder: (context) => MessageActionMenu(
                                           message: message.text.decodeString,
                                           onCopy: () async {
-                                            MixpanelManager().track(
-                                                'Chat Message Copied',
-                                                properties: {
-                                                  'message': message.text
-                                                });
-                                            await Clipboard.setData(
-                                                ClipboardData(
-                                                    text: message
-                                                        .text.decodeString));
+                                            MixpanelManager()
+                                                .track('Chat Message Copied', properties: {'message': message.text});
+                                            await Clipboard.setData(ClipboardData(text: message.text.decodeString));
                                             if (context.mounted) {
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(
+                                              ScaffoldMessenger.of(context).showSnackBar(
                                                 const SnackBar(
                                                   content: Text(
                                                     'Message copied to clipboard.',
                                                     style: TextStyle(
-                                                      color: Color.fromARGB(
-                                                          255, 255, 255, 255),
+                                                      color: Color.fromARGB(255, 255, 255, 255),
                                                       fontSize: 12.0,
                                                     ),
                                                   ),
-                                                  duration: Duration(
-                                                      milliseconds: 2000),
+                                                  duration: Duration(milliseconds: 2000),
                                                 ),
                                               );
                                               Navigator.pop(context);
                                             }
                                           },
                                           onSelectText: () {
-                                            MixpanelManager().track(
-                                                'Chat Message Text Selected',
-                                                properties: {
-                                                  'message': message.text
-                                                });
-                                            routeToPage(
-                                                context,
-                                                SelectTextScreen(
-                                                    message: message));
+                                            MixpanelManager().track('Chat Message Text Selected',
+                                                properties: {'message': message.text});
+                                            routeToPage(context, SelectTextScreen(message: message));
                                           },
                                           onShare: () {
-                                            MixpanelManager().track(
-                                                'Chat Message Shared',
-                                                properties: {
-                                                  'message': message.text
-                                                });
+                                            MixpanelManager()
+                                                .track('Chat Message Shared', properties: {'message': message.text});
                                             Share.share(
                                               '${message.text.decodeString}\n\nResponse from Omi. Get yours at https://omi.me',
                                               subject: 'Chat with Omi',
@@ -269,22 +235,18 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                             Navigator.pop(context);
                                           },
                                           onReport: () {
-                                            if (message.sender ==
-                                                MessageSender.human) {
+                                            if (message.sender == MessageSender.human) {
                                               Navigator.pop(context);
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(
+                                              ScaffoldMessenger.of(context).showSnackBar(
                                                 const SnackBar(
                                                   content: Text(
                                                     'You cannot report your own messages.',
                                                     style: TextStyle(
-                                                      color: Color.fromARGB(
-                                                          255, 255, 255, 255),
+                                                      color: Color.fromARGB(255, 255, 255, 255),
                                                       fontSize: 12.0,
                                                     ),
                                                   ),
-                                                  duration: Duration(
-                                                      milliseconds: 2000),
+                                                  duration: Duration(milliseconds: 2000),
                                                 ),
                                               );
                                               return;
@@ -298,38 +260,22 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                                     Navigator.of(context).pop();
                                                   },
                                                   () {
-                                                    MixpanelManager().track(
-                                                        'Chat Message Reported',
-                                                        properties: {
-                                                          'message':
-                                                              message.text
-                                                        });
+                                                    MixpanelManager().track('Chat Message Reported',
+                                                        properties: {'message': message.text});
                                                     Navigator.of(context).pop();
                                                     Navigator.of(context).pop();
-                                                    context
-                                                        .read<MessageProvider>()
-                                                        .removeLocalMessage(
-                                                            message.id);
-                                                    reportMessageServer(
-                                                        message.id);
-                                                    ScaffoldMessenger.of(
-                                                            context)
-                                                        .showSnackBar(
+                                                    context.read<MessageProvider>().removeLocalMessage(message.id);
+                                                    reportMessageServer(message.id);
+                                                    ScaffoldMessenger.of(context).showSnackBar(
                                                       const SnackBar(
                                                         content: Text(
                                                           'Message reported successfully.',
                                                           style: TextStyle(
-                                                            color:
-                                                                Color.fromARGB(
-                                                                    255,
-                                                                    255,
-                                                                    255,
-                                                                    255),
+                                                            color: Color.fromARGB(255, 255, 255, 255),
                                                             fontSize: 12.0,
                                                           ),
                                                         ),
-                                                        duration: Duration(
-                                                            milliseconds: 2000),
+                                                        duration: Duration(milliseconds: 2000),
                                                       ),
                                                     );
                                                   },
@@ -344,41 +290,21 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                     },
                                     child: Padding(
                                       key: ValueKey(message.id),
-                                      padding: EdgeInsets.only(
-                                          bottom: bottomPadding,
-                                          left: 18,
-                                          right: 18,
-                                          top: topPadding),
+                                      padding:
+                                          EdgeInsets.only(bottom: bottomPadding, left: 18, right: 18, top: topPadding),
                                       child: message.sender == MessageSender.ai
                                           ? AIMessage(
-                                              showTypingIndicator: provider
-                                                      .showTypingIndicator &&
-                                                  chatIndex == 0,
+                                              showTypingIndicator: provider.showTypingIndicator && chatIndex == 0,
                                               message: message,
                                               sendMessage: _sendMessageUtil,
-                                              displayOptions: provider
-                                                          .messages.length <=
-                                                      1 &&
-                                                  provider
-                                                          .messageSenderApp(
-                                                              message.appId)
-                                                          ?.isNotPersona() ==
-                                                      true,
-                                              appSender:
-                                                  provider.messageSenderApp(
-                                                      message.appId),
-                                              updateConversation:
-                                                  (ServerConversation
-                                                      conversation) {
-                                                context
-                                                    .read<
-                                                        ConversationProvider>()
-                                                    .updateConversation(
-                                                        conversation);
+                                              displayOptions: provider.messages.length <= 1 &&
+                                                  provider.messageSenderApp(message.appId)?.isNotPersona() == true,
+                                              appSender: provider.messageSenderApp(message.appId),
+                                              updateConversation: (ServerConversation conversation) {
+                                                context.read<ConversationProvider>().updateConversation(conversation);
                                               },
                                               setMessageNps: (int value) {
-                                                provider.setMessageNps(
-                                                    message, value);
+                                                provider.setMessageNps(message, value);
                                               },
                                             )
                                           : HumanMessage(message: message),
@@ -406,92 +332,60 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       AnimatedGradientBorder(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         margin: EdgeInsets.only(
                             left: 28,
                             right: 28,
-                            bottom: widget.isPivotBottom
-                                ? 40
-                                : (home.isChatFieldFocused ? 40 : 120)),
+                            bottom: widget.isPivotBottom ? 40 : (home.isChatFieldFocused ? 40 : 120)),
                         child: Column(
                           children: [
-                            Consumer<MessageProvider>(
-                                builder: (context, provider, child) {
+                            Consumer<MessageProvider>(builder: (context, provider, child) {
                               if (provider.selectedFiles.isNotEmpty) {
                                 return Stack(
                                   children: [
                                     Align(
                                       alignment: Alignment.centerLeft,
                                       child: SizedBox(
-                                        height:
-                                            MediaQuery.sizeOf(context).height *
-                                                0.118,
+                                        height: MediaQuery.sizeOf(context).height * 0.118,
                                         child: ListView.builder(
-                                          itemCount:
-                                              provider.selectedFiles.length,
+                                          itemCount: provider.selectedFiles.length,
                                           scrollDirection: Axis.horizontal,
                                           shrinkWrap: true,
                                           itemBuilder: (ctx, idx) {
                                             return Container(
-                                              margin: const EdgeInsets.only(
-                                                  bottom: 10,
-                                                  top: 10,
-                                                  left: 10),
-                                              height: MediaQuery.sizeOf(context)
-                                                      .width *
-                                                  0.2,
-                                              width: MediaQuery.sizeOf(context)
-                                                      .width *
-                                                  0.2,
+                                              margin: const EdgeInsets.only(bottom: 10, top: 10, left: 10),
+                                              height: MediaQuery.sizeOf(context).width * 0.2,
+                                              width: MediaQuery.sizeOf(context).width * 0.2,
                                               decoration: BoxDecoration(
                                                 color: Colors.grey[800],
-                                                image:
-                                                    provider.selectedFileTypes[
-                                                                idx] ==
-                                                            'image'
-                                                        ? DecorationImage(
-                                                            image: FileImage(
-                                                                provider.selectedFiles[
-                                                                    idx]),
-                                                            fit: BoxFit.cover,
-                                                          )
-                                                        : null,
-                                                borderRadius:
-                                                    BorderRadius.circular(10),
+                                                image: provider.selectedFileTypes[idx] == 'image'
+                                                    ? DecorationImage(
+                                                        image: FileImage(provider.selectedFiles[idx]),
+                                                        fit: BoxFit.cover,
+                                                      )
+                                                    : null,
+                                                borderRadius: BorderRadius.circular(10),
                                               ),
                                               child: Stack(
                                                 children: [
-                                                  provider.selectedFileTypes[
-                                                              idx] !=
-                                                          'image'
+                                                  provider.selectedFileTypes[idx] != 'image'
                                                       ? const Center(
                                                           child: Icon(
-                                                            Icons
-                                                                .insert_drive_file,
+                                                            Icons.insert_drive_file,
                                                             color: Colors.white,
                                                             size: 30,
                                                           ),
                                                         )
                                                       : Container(),
-                                                  if (provider.isFileUploading(
-                                                      provider
-                                                          .selectedFiles[idx]
-                                                          .path))
+                                                  if (provider.isFileUploading(provider.selectedFiles[idx].path))
                                                     Container(
-                                                      color: Colors.black
-                                                          .withOpacity(0.5),
+                                                      color: Colors.black.withOpacity(0.5),
                                                       child: const Center(
                                                         child: SizedBox(
                                                           width: 20,
                                                           height: 20,
-                                                          child:
-                                                              CircularProgressIndicator(
-                                                            valueColor:
-                                                                AlwaysStoppedAnimation<
-                                                                        Color>(
-                                                                    Colors
-                                                                        .white70),
+                                                          child: CircularProgressIndicator(
+                                                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
                                                           ),
                                                         ),
                                                       ),
@@ -501,19 +395,12 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                                     right: 4,
                                                     child: GestureDetector(
                                                       onTap: () {
-                                                        provider
-                                                            .clearSelectedFile(
-                                                                idx);
+                                                        provider.clearSelectedFile(idx);
                                                       },
                                                       child: CircleAvatar(
                                                         radius: 12,
-                                                        backgroundColor:
-                                                            Colors.grey[700],
-                                                        child: const Icon(
-                                                            Icons.close,
-                                                            size: 16,
-                                                            color:
-                                                                Colors.white),
+                                                        backgroundColor: Colors.grey[700],
+                                                        child: const Icon(Icons.close, size: 16, color: Colors.white),
                                                       ),
                                                     ),
                                                   ),
@@ -537,18 +424,14 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                   IconButton(
                                     icon: Icon(
                                       Icons.add,
-                                      color: provider.selectedFiles.length > 3
-                                          ? Colors.grey
-                                          : const Color(0xFFF7F4F4),
+                                      color: provider.selectedFiles.length > 3 ? Colors.grey : const Color(0xFFF7F4F4),
                                       size: 24.0,
                                     ),
                                     onPressed: () {
                                       if (provider.selectedFiles.length > 3) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
+                                        ScaffoldMessenger.of(context).showSnackBar(
                                           const SnackBar(
-                                            content: Text(
-                                                'You can only upload 4 files at a time'),
+                                            content: Text('You can only upload 4 files at a time'),
                                             duration: Duration(seconds: 2),
                                           ),
                                         );
@@ -558,58 +441,38 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                         context: context,
                                         backgroundColor: Colors.grey[850],
                                         shape: const RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.vertical(
-                                              top: Radius.circular(16.0)),
+                                          borderRadius: BorderRadius.vertical(top: Radius.circular(16.0)),
                                         ),
                                         builder: (BuildContext context) {
                                           return Padding(
-                                            padding: const EdgeInsets.fromLTRB(
-                                                12, 12, 12, 40),
+                                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 40),
                                             child: Wrap(
                                               children: [
                                                 ListTile(
-                                                  leading: const Icon(
-                                                      Icons.camera_alt,
-                                                      color: Colors.white),
-                                                  title: const Text(
-                                                      "Take a Photo",
-                                                      style: TextStyle(
-                                                          color: Colors.white)),
+                                                  leading: const Icon(Icons.camera_alt, color: Colors.white),
+                                                  title:
+                                                      const Text("Take a Photo", style: TextStyle(color: Colors.white)),
                                                   onTap: () {
                                                     Navigator.pop(context);
-                                                    context
-                                                        .read<MessageProvider>()
-                                                        .captureImage();
+                                                    context.read<MessageProvider>().captureImage();
                                                   },
                                                 ),
                                                 ListTile(
-                                                  leading: const Icon(
-                                                      Icons.photo,
-                                                      color: Colors.white),
-                                                  title: const Text(
-                                                      "Select a Photo",
-                                                      style: TextStyle(
-                                                          color: Colors.white)),
+                                                  leading: const Icon(Icons.photo, color: Colors.white),
+                                                  title: const Text("Select a Photo",
+                                                      style: TextStyle(color: Colors.white)),
                                                   onTap: () {
                                                     Navigator.pop(context);
-                                                    context
-                                                        .read<MessageProvider>()
-                                                        .selectImage();
+                                                    context.read<MessageProvider>().selectImage();
                                                   },
                                                 ),
                                                 ListTile(
-                                                  leading: const Icon(
-                                                      Icons.insert_drive_file,
-                                                      color: Colors.white),
-                                                  title: const Text(
-                                                      "Select a File",
-                                                      style: TextStyle(
-                                                          color: Colors.white)),
+                                                  leading: const Icon(Icons.insert_drive_file, color: Colors.white),
+                                                  title: const Text("Select a File",
+                                                      style: TextStyle(color: Colors.white)),
                                                   onTap: () {
                                                     Navigator.pop(context);
-                                                    context
-                                                        .read<MessageProvider>()
-                                                        .selectFile();
+                                                    context.read<MessageProvider>().selectFile();
                                                   },
                                                 ),
                                               ],
@@ -626,10 +489,7 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                             setState(() {
                                               textController.text = transcript;
                                               _showVoiceRecorder = false;
-                                              context
-                                                  .read<MessageProvider>()
-                                                  .setNextMessageOriginIsVoice(
-                                                      true);
+                                              context.read<MessageProvider>().setNextMessageOriginIsVoice(true);
                                             });
                                           },
                                           onClose: () {
@@ -648,36 +508,25 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                             obscureText: false,
                                             focusNode: home.chatFieldFocusNode,
                                             textAlign: TextAlign.start,
-                                            textAlignVertical:
-                                                TextAlignVertical.top,
+                                            textAlignVertical: TextAlignVertical.top,
                                             decoration: const InputDecoration(
                                               hintText: 'Message',
-                                              hintStyle: TextStyle(
-                                                  fontSize: 14.0,
-                                                  color: Colors.grey),
+                                              hintStyle: TextStyle(fontSize: 14.0, color: Colors.grey),
                                               focusedBorder: InputBorder.none,
                                               enabledBorder: InputBorder.none,
-                                              contentPadding: EdgeInsets.only(
-                                                  top: 8, bottom: 10),
+                                              contentPadding: EdgeInsets.only(top: 8, bottom: 10),
                                             ),
                                             maxLines: null,
-                                            keyboardType:
-                                                TextInputType.multiline,
-                                            style: TextStyle(
-                                                fontSize: 14.0,
-                                                color: Colors.grey.shade200,
-                                                height: 24 / 14),
+                                            keyboardType: TextInputType.multiline,
+                                            style:
+                                                TextStyle(fontSize: 14.0, color: Colors.grey.shade200, height: 24 / 14),
                                           ),
                                         ),
                                 ),
                                 if (shouldShowVoiceRecorderButton())
                                   GestureDetector(
                                     child: Container(
-                                      padding: const EdgeInsets.only(
-                                          top: 14,
-                                          bottom: 14,
-                                          left: 14,
-                                          right: 14),
+                                      padding: const EdgeInsets.only(top: 14, bottom: 14, left: 14, right: 14),
                                       child: const Icon(
                                         Icons.mic_outlined,
                                         color: Color(0xFFF7F4F4),
@@ -693,32 +542,26 @@ class ChatPageState extends State<ChatPage> with AutomaticKeepAliveClientMixin {
                                 !shouldShowSendButton(provider)
                                     ? const SizedBox.shrink()
                                     : GestureDetector(
-                                        onTap: provider.sendingMessage ||
-                                                provider.isUploadingFiles
+                                        onTap: provider.sendingMessage || provider.isUploadingFiles
                                             ? null
                                             : () {
-                                                String message =
-                                                    textController.text;
+                                                String message = textController.text;
                                                 if (message.isEmpty) return;
-                                                if (connectivityProvider
-                                                    .isConnected) {
+                                                if (connectivityProvider.isConnected) {
                                                   _sendMessageUtil(message);
                                                 } else {
-                                                  ScaffoldMessenger.of(context)
-                                                      .showSnackBar(
+                                                  ScaffoldMessenger.of(context).showSnackBar(
                                                     const SnackBar(
-                                                      content: Text(
-                                                          'Please check your internet connection and try again'),
-                                                      duration:
-                                                          Duration(seconds: 2),
+                                                      content:
+                                                          Text('Please check your internet connection and try again'),
+                                                      duration: Duration(seconds: 2),
                                                     ),
                                                   );
                                                 }
                                               },
                                         child: Container(
                                           padding: const EdgeInsets.all(4),
-                                          margin: const EdgeInsets.only(
-                                              top: 10, bottom: 10, right: 6),
+                                          margin: const EdgeInsets.only(top: 10, bottom: 10, right: 6),
                                           decoration: const BoxDecoration(
                                             color: Colors.white,
                                             shape: BoxShape.circle,

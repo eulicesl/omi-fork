@@ -36,8 +36,7 @@ class AnimatedGradientBorder extends StatefulWidget {
   State<AnimatedGradientBorder> createState() => _AnimatedGradientBorderState();
 }
 
-class _AnimatedGradientBorderState extends State<AnimatedGradientBorder>
-    with SingleTickerProviderStateMixin {
+class _AnimatedGradientBorderState extends State<AnimatedGradientBorder> with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _opacityAnimation;
 
@@ -85,8 +84,7 @@ class _AnimatedGradientBorderState extends State<AnimatedGradientBorder>
               gradient: LinearGradient(
                 colors: widget.gradient.colors.map((color) {
                   // Apply opacity animation to each gradient color
-                  return color
-                      .withOpacity(color.opacity * _opacityAnimation.value);
+                  return color.withOpacity(color.opacity * _opacityAnimation.value);
                 }).toList(),
                 begin: (widget.gradient as LinearGradient).begin,
                 end: (widget.gradient as LinearGradient).end,
