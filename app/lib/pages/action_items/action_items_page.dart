@@ -21,6 +21,11 @@ class ActionItemsPage extends StatefulWidget {
 class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollController = ScrollController();
   Set<String> _exportedToAppleReminders = <String>{};
+  final Map<String, Set<String>> _exportedItems = {
+    'reminders': <String>{},
+    'notes': <String>{},
+    'calendar': <String>{},
+  };
 
   @override
   bool get wantKeepAlive => true;
@@ -46,6 +51,12 @@ class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAli
     super.dispose();
   }
 
+  void _onItemExported(String integration, String description) {
+    setState(() {
+      (_exportedItems[integration] ??= <String>{}).add(description);
+    });
+  }
+
   Future<void> _checkExistingAppleReminders() async {
     if (!PlatformService.isApple) return;
 
@@ -56,6 +67,7 @@ class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAli
       if (mounted) {
         setState(() {
           _exportedToAppleReminders = existingReminders.toSet();
+          _exportedItems['reminders'] = existingReminders.toSet();
         });
       }
     } catch (e) {
@@ -468,6 +480,8 @@ class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAli
         onToggle: (newState) => provider.updateActionItemState(item, newState),
         exportedToAppleReminders: _exportedToAppleReminders,
         onExportedToAppleReminders: _checkExistingAppleReminders,
+        exportedItems: _exportedItems,
+        onExported: _onItemExported,
       ),
     );
   }

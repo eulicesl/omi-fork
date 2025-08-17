@@ -34,7 +34,7 @@ Action Item from Omi
 ━━━━━━━━━━━━━━━━━
 $description
 
-Added: ${DateTime.now().toString().split('.')[0]}
+Added: ${DateTime.now().toIso8601String().substring(0, 19)}
 ''';
       final result = await _channel.invokeMethod('shareToNotes', {
         'content': formattedContent,

@@ -33,12 +33,15 @@ class AppleCalendarService: NSObject {
             return
         }
         
+        // Optional: allow custom duration from args, default to 1 hour
+        let duration = (args["durationMinutes"] as? Double) ?? 60.0
+        
         // Request calendar permissions and then create the event
         if #available(iOS 17.0, *) {
             eventStore.requestFullAccessToEvents { granted, _ in
                 DispatchQueue.main.async {
                     if granted {
-                        self.createAndSaveEvent(title: title, notes: notes, result: result)
+                        self.createAndSaveEvent(title: title, notes: notes, duration: duration, result: result)
                     } else {
                         result([
                             "success": false,
@@ -51,7 +54,7 @@ class AppleCalendarService: NSObject {
             eventStore.requestAccess(to: .event) { granted, _ in
                 DispatchQueue.main.async {
                     if granted {
-                        self.createAndSaveEvent(title: title, notes: notes, result: result)
+                        self.createAndSaveEvent(title: title, notes: notes, duration: duration, result: result)
                     } else {
                         result([
                             "success": false,
@@ -63,14 +66,14 @@ class AppleCalendarService: NSObject {
         }
     }
     
-    private func createAndSaveEvent(title: String, notes: String, result: @escaping FlutterResult) {
+    private func createAndSaveEvent(title: String, notes: String, duration: Double, result: @escaping FlutterResult) {
         do {
             let event = EKEvent(eventStore: self.eventStore)
             event.title = title
             event.notes = notes
-            // Default event duration: now + 1 hour
+            // Event duration: now + specified minutes (default 60)
             event.startDate = Date()
-            event.endDate = Date().addingTimeInterval(3600)
+            event.endDate = Date().addingTimeInterval(duration * 60)
             event.calendar = self.eventStore.defaultCalendarForNewEvents
             try self.eventStore.save(event, span: .thisEvent)
             result([

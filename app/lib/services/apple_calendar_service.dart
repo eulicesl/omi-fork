@@ -15,17 +15,23 @@ class AppleCalendarService {
   /// The native implementation formats the event and returns a structured
   /// response via the platform channel. In case of unexpected errors,
   /// `isSuccess` will be `false` and `message` will describe the issue.
-  Future<({bool isSuccess, String message})> createEvent(String description) async {
+  /// 
+  /// [durationMinutes] specifies the event duration in minutes (default: 60)
+  Future<({bool isSuccess, String message})> createEvent(
+    String description, {
+    double durationMinutes = 60.0,
+  }) async {
     try {
       final formattedContent = '''
 Action Item: $description
 
-Created: ${DateTime.now().toLocal()}
+Created: ${DateTime.now().toIso8601String().substring(0, 19)}
 Source: OMI App
 ''';
       final result = await _channel.invokeMethod('createEvent', {
         'title': description,
         'notes': formattedContent,
+        'durationMinutes': durationMinutes,
       });
       if (result is Map) {
         return (
@@ -50,6 +56,7 @@ Source: OMI App
       final result = await _channel.invokeMethod('checkAvailability');
       return result as bool? ?? false;
     } catch (e) {
+      print('Error checking calendar availability: $e');
       return false;
     }
   }

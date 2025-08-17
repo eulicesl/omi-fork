@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -23,6 +24,8 @@ class ActionItemTileWidget extends StatefulWidget {
   final Function(bool) onToggle;
   final Set<String>? exportedToAppleReminders;
   final VoidCallback? onExportedToAppleReminders;
+  final Map<String, Set<String>>? exportedItems;
+  final Function(String integration, String description)? onExported;
 
   const ActionItemTileWidget({
     super.key,
@@ -30,6 +33,8 @@ class ActionItemTileWidget extends StatefulWidget {
     required this.onToggle,
     this.exportedToAppleReminders,
     this.onExportedToAppleReminders,
+    this.exportedItems,
+    this.onExported,
   });
 
   @override
@@ -42,9 +47,8 @@ class _ActionItemTileWidgetState extends State<ActionItemTileWidget> {
   ActionItemIntegration _selectedIntegration =
       ActionItemIntegration.appleReminders;
 
-  // Keep track of which descriptions have been exported to each destination.
-  // This prevents duplicate exports during a session.
-  final Map<String, Set<String>> _exportedItems = {
+  // Use parent-provided export tracking or fall back to local state
+  Map<String, Set<String>> get _exportedItems => widget.exportedItems ?? {
     'reminders': <String>{},
     'notes': <String>{},
     'calendar': <String>{},
@@ -100,8 +104,9 @@ class _ActionItemTileWidgetState extends State<ActionItemTileWidget> {
           setState(() => _selectedIntegration = integration);
         }
       }
-    } catch (_) {
-      // ignore errors and fall back to default integration
+    } catch (e) {
+      debugPrint('Error loading integration preference: $e');
+      // Fall back to default integration
     }
   }
 
@@ -110,7 +115,8 @@ class _ActionItemTileWidgetState extends State<ActionItemTileWidget> {
     try {
       final prefs = SharedPreferencesUtil();
       prefs.taskExportDestination = integration.name;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error saving integration preference: $e');
       // Non-fatal: failure to write prefs doesn't break selection retention
     }
   }
@@ -417,6 +423,9 @@ class _ActionItemTileWidgetState extends State<ActionItemTileWidget> {
     if (!mounted) return;
 
     if (result.isSuccess) {
+      // Notify parent if callback is available
+      widget.onExported?.call('notes', widget.actionItem.description);
+      // Update local tracking as fallback
       (_exportedItems['notes'] ??= <String>{})
           .add(widget.actionItem.description);
       setState(() {});
@@ -484,6 +493,9 @@ class _ActionItemTileWidgetState extends State<ActionItemTileWidget> {
     if (!mounted) return;
 
     if (result.isSuccess) {
+      // Notify parent if callback is available  
+      widget.onExported?.call('calendar', widget.actionItem.description);
+      // Update local tracking as fallback
       (_exportedItems['calendar'] ??= <String>{})
           .add(widget.actionItem.description);
       setState(() {});

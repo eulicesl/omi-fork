@@ -47,7 +47,10 @@ class AppleNotesService {
     }
     
     private func isNotesAppAvailable(result: @escaping FlutterResult) {
-        let url = URL(string: "mobilenotes://")!
+        guard let url = URL(string: "mobilenotes://") else {
+            result(false)
+            return
+        }
         result(UIApplication.shared.canOpenURL(url))
     }
 }
