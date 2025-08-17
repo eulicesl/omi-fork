@@ -274,17 +274,17 @@ class _ActionItemTileWidgetState extends State<ActionItemTileWidget> {
                     width: 12,
                     height: 12,
                     decoration: BoxDecoration(
-                      color: _isExportedToCurrent ? Colors.green : Colors.yellow,
+                      color: _isExportedToCurrent ? Colors.green : Colors.blue,
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: const Color(0xFF1F1F25),
-                        width: 1,
+                        width: 1.5,
                       ),
                     ),
                     child: Icon(
                       _isExportedToCurrent ? Icons.check : Icons.add,
                       size: 8,
-                      color: _isExportedToCurrent ? Colors.white : Colors.black,
+                      color: Colors.white,
                     ),
                   ),
                 ),
