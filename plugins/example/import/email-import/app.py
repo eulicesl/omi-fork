@@ -116,10 +116,26 @@ def fetch_emails():
 
         # Connect and fetch messages
         try:
-            imap = imaplib.IMAP4_SSL(host, port) if port == 993 else imaplib.IMAP4(host, port)
+            # server is on the standard SSL port (993), use IMAP4_SSL.  If
+            # connecting on the STARTTLS port (143), upgrade the connection
+            # with starttls().  For any other port, refuse the connection to
+            # avoid sending credentials over an unencrypted channel.
+            if port == 993:
+                imap = imaplib.IMAP4_SSL(host, port)
+            elif port == 143:
+                imap = imaplib.IMAP4(host, port)
+                try:
+                    imap.starttls()
+                except Exception as e:
+                    raise Exception(f"STARTTLS failed on port {port}: {e}")
+            else:
+                raise Exception(
+                    f"Refusing to connect to IMAP server on port {port} without SSL/TLS. "
+                    "Use port 993 for SSL or 143 for STARTTLS."
+                )
+
             imap.login(username, password)
             imap.select('INBOX')
-
             # Search for all messages, then fetch the latest ones
             typ, data_ids = imap.search(None, 'ALL')
             if typ != 'OK':
