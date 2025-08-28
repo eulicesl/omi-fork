@@ -10,6 +10,7 @@ import 'package:omi/providers/action_items_provider.dart';
 import 'package:omi/utils/analytics/mixpanel.dart';
 import 'package:omi/services/apple_reminders_service.dart';
 import 'package:omi/utils/platform/platform_service.dart';
+import 'package:omi/services/app_review_service.dart';
 
 class ActionItemsPage extends StatefulWidget {
   const ActionItemsPage({super.key});
@@ -21,6 +22,7 @@ class ActionItemsPage extends StatefulWidget {
 class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollController = ScrollController();
   Set<String> _exportedToAppleReminders = <String>{};
+  final AppReviewService _appReviewService = AppReviewService();
 
   @override
   bool get wantKeepAlive => true;
@@ -63,12 +65,35 @@ class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAli
     }
   }
 
+  // checks if it's the first action item completed
+  Future<void> _onActionItemCompleted() async {
+    final hasCompletedFirst = await _appReviewService.hasCompletedFirstActionItem();
+
+    if (!hasCompletedFirst) {
+      await _appReviewService.markFirstActionItemCompleted();
+
+      if (mounted) {
+        await _appReviewService.showReviewPromptIfNeeded(context, isProcessingFirstConversation: false);
+      }
+    }
+  }
+
   void _onScroll() {
     final provider = Provider.of<ActionItemsProvider>(context, listen: false);
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
       if (!provider.isFetching && provider.hasMore) {
         provider.loadMoreActionItems();
       }
+    }
+  }
+
+  void scrollToTop() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutCubic,
+      );
     }
   }
 
@@ -189,21 +214,13 @@ class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAli
                                 
                               ],
                             ),
-                            // Create button
-                            SizedBox(
-                              width: 44,
-                              height: 44,
-                              child: ElevatedButton(
-                                onPressed: _showCreateActionItemSheet,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppStyles.backgroundSecondary,
-                                  foregroundColor: Colors.white,
-                                  padding: EdgeInsets.zero,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: const Icon(Icons.add, size: 18),
+                            // Create icon
+                            IconButton(
+                              onPressed: _showCreateActionItemSheet,
+                              icon: const Icon(
+                                Icons.add,
+                                color: Colors.white,
+                                size: 18,
                               ),
                             ),
                           ],
@@ -465,7 +482,12 @@ class _ActionItemsPageState extends State<ActionItemsPage> with AutomaticKeepAli
       },
       child: ActionItemTileWidget(
         actionItem: item,
-        onToggle: (newState) => provider.updateActionItemState(item, newState),
+        onToggle: (newState) {
+          provider.updateActionItemState(item, newState);
+          if (newState) {
+            _onActionItemCompleted();
+          }
+        },
         exportedToAppleReminders: _exportedToAppleReminders,
         onExportedToAppleReminders: _checkExistingAppleReminders,
       ),
