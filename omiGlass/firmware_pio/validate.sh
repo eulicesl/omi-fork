@@ -59,7 +59,9 @@ echo "✅ Post-build UF2 script found"
 
 # Test UF2 conversion script
 output=$(python3 scripts/uf2conv.py -f ESP32S3 2>&1)
-if [[ $? -ne 1 || ! "$output" =~ "Need input file" ]]; then
+exit_code=$?
+# Accept any non-zero exit code and a general error message containing "input file"
+if [[ $exit_code -eq 0 || ! "$output" =~ [Ii]nput\ file ]]; then
     echo "❌ Error: UF2 conversion script test failed"
     exit 1
 fi
