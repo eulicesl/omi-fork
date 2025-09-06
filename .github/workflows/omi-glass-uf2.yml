@@ -1,0 +1,48 @@
+name: Omi Glass UF2 (PlatformIO)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/glass-audio-opus-ble-pio
+      - main
+    paths:
+      - "omiGlass/firmware_pio/**"
+
+jobs:
+  build-uf2:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Build UF2 (release)
+        working-directory: omiGlass/firmware_pio
+        run: |
+          # Optional: fetch your preferred uf2conv.py if placeholder present
+          if [ -s scripts/uf2conv.py ] && grep -q "PLACEHOLDER" scripts/uf2conv.py || true; then
+            echo "Fetching uf2conv.py..."
+            curl -L -o scripts/uf2conv.py https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
+            chmod +x scripts/uf2conv.py
+          fi
+          pio run -e uf2_release
+          echo "Built UF2 at:"
+          ls -l .pio/build/uf2_release/*.uf2
+
+      - name: Upload UF2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omi-glass-firmware-uf2
+          path: omiGlass/firmware_pio/.pio/build/uf2_release/*.uf2
+          if-no-files-found: error
