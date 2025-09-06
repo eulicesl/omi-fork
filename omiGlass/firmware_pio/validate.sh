@@ -26,7 +26,7 @@ if [ ! -f "scripts/uf2conv.py" ]; then
 fi
 
 # Check if it's not a placeholder
-if grep -q "placeholder" scripts/uf2conv.py; then
+if grep -iq "placeholder" scripts/uf2conv.py; then
     echo "❌ Error: uf2conv.py is still a placeholder"
     exit 1
 fi
