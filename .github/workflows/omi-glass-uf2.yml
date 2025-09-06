@@ -31,7 +31,7 @@ jobs:
         working-directory: omiGlass/firmware_pio
         run: |
           # Optional: fetch your preferred uf2conv.py if placeholder present
-          if [ -s scripts/uf2conv.py ] && grep -q "PLACEHOLDER" scripts/uf2conv.py || true; then
+          if [ -s scripts/uf2conv.py ] && (grep -q "placeholder" scripts/uf2conv.py || grep -q "PLACEHOLDER" scripts/uf2conv.py) 2>/dev/null; then
             echo "Fetching uf2conv.py..."
             curl -L -o scripts/uf2conv.py https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
             chmod +x scripts/uf2conv.py
