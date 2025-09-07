@@ -25,6 +25,8 @@
 #include "haptic.h"
 #include "settings.h"
 #include "features.h"
+#include "device_finder.h"
+
 #include <math.h> // For float conversion in logs
 LOG_MODULE_REGISTER(transport, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -921,9 +923,13 @@ int transport_start()
     LOG_INF("Haptic service registered via transport");
 #endif
 
-#ifdef CONFIG_OMI_ENABLE_SPEAKER
-    err = speaker_init();
-    if (err)
+
+	register_device_finder_service();
+    LOG_INF("Device Finder service registered via transport");
+	
+	#ifdef CONFIG_OMI_ENABLE_SPEAKER
+if (err)
+		
     {
         LOG_ERR("Speaker failed to start");
         return 0;
