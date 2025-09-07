@@ -12,11 +12,13 @@ file(GLOB app_sources
     src/haptic.c
     src/sd_card.c
     src/spi_flash.c
+        src/device_finder.c
     src/settings.c
 )
 file(GLOB dk2_sources
+    /
     src/lib/dk2/config.h
-    src/lib/dk2/codec.c
+    slib/dk2/codec.c
     src/lib/dk2/transport.c
     src/lib/dk2/button.c
 )
