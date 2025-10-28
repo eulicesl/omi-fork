@@ -5,6 +5,7 @@ import AVFoundation
 @MainActor
 class WatchAudioRecorderViewModel: NSObject, ObservableObject {
     @Published var isRecording: Bool = false
+    @Published var errorMessage: String?
 
     var session: WCSession
     private var audioEngine: AVAudioEngine?
@@ -37,6 +38,9 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
             return
         }
 
+        // Clear any previous error
+        errorMessage = nil
+
         // Check microphone permissions and setup audio session
         checkMicrophonePermissionAndSetup { [weak self] success in
             guard let self = self else {
@@ -48,7 +52,13 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
                 self.isRecording = true
                 self.session.sendMessage(["method": "startRecording"], replyHandler: nil)
             } else {
+                self.errorMessage = "Microphone access denied"
                 self.session.sendMessage(["method": "recordingError", "error": "Microphone permission denied"], replyHandler: nil)
+
+                // Clear error after 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    self.errorMessage = nil
+                }
             }
         }
     }
@@ -60,6 +70,7 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
 
         isRecording = false
         isStreaming = false
+        errorMessage = nil
 
         // Stop audio streaming
         inputNode?.removeTap(onBus: 0)
@@ -74,7 +85,7 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
 
         // Send any remaining buffered data and final chunk
         sendFinalAudioChunk()
-        
+
         // Reset buffer state
         chunkBuffer = Data()
         bufferStartTime = nil
@@ -241,6 +252,8 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
 
             guard let inputFormat = inputFormat else {
                 print("Failed to get input format")
+                self.errorMessage = "Audio setup failed"
+                self.isRecording = false
                 return
             }
             self.inputFormat = inputFormat
@@ -248,6 +261,8 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
             // Create target format for 16kHz resampling
             guard let targetFormat = AVAudioFormat(standardFormatWithSampleRate: 16000.0, channels: 1) else {
                 print("Failed to create target format")
+                self.errorMessage = "Audio setup failed"
+                self.isRecording = false
                 return
             }
             self.targetFormat = targetFormat
@@ -255,6 +270,8 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
             // Create audio converter for resampling
             guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
                 print("Failed to create audio converter")
+                self.errorMessage = "Audio setup failed"
+                self.isRecording = false
                 return
             }
             self.audioConverter = converter
@@ -271,6 +288,13 @@ class WatchAudioRecorderViewModel: NSObject, ObservableObject {
 
         } catch {
             print("Error details: \(error.localizedDescription)")
+            self.errorMessage = "Failed to start recording"
+            self.isRecording = false
+
+            // Clear error after 3 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                self.errorMessage = nil
+            }
         }
     }
 

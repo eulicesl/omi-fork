@@ -28,13 +28,38 @@ class BatteryManager: NSObject {
     }
     
     func sendBatteryLevel() {
-        let level = WKInterfaceDevice.current().batteryLevel * 100  // 0.0–100.0
-        let state = WKInterfaceDevice.current().batteryState.rawValue
-        
+        let device = WKInterfaceDevice.current()
+        let level = device.batteryLevel * 100  // 0.0–100.0
+        let state = device.batteryState
+
+        // Enhanced battery state information
+        let stateString: String
+        let isCharging: Bool
+
+        switch state {
+        case .charging:
+            stateString = "charging"
+            isCharging = true
+        case .full:
+            stateString = "full"
+            isCharging = true
+        case .unplugged:
+            stateString = "unplugged"
+            isCharging = false
+        case .unknown:
+            stateString = "unknown"
+            isCharging = false
+        @unknown default:
+            stateString = "unknown"
+            isCharging = false
+        }
+
         let data: [String: Any] = [
             "method": "batteryUpdate",
             "batteryLevel": level,
-            "batteryState": state
+            "batteryState": state.rawValue,
+            "batteryStateString": stateString,
+            "isCharging": isCharging
         ]
         
         if WCSession.default.isReachable {
