@@ -68,8 +68,10 @@ def get_memories(
     categories: List[str] = [],
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    folder_id: Optional[str] = None,
+    tag_id: Optional[str] = None,
 ):
-    print('get_memories db', uid, limit, offset, categories, start_date, end_date)
+    print('get_memories db', uid, limit, offset, categories, start_date, end_date, folder_id, tag_id)
     memories_ref = db.collection(users_collection).document(uid).collection(memories_collection)
 
     if categories:
@@ -80,6 +82,12 @@ def get_memories(
 
     if end_date:
         memories_ref = memories_ref.where(filter=FieldFilter('created_at', '<=', end_date))
+
+    if folder_id:
+        memories_ref = memories_ref.where(filter=FieldFilter('folder_ids', 'array_contains', folder_id))
+
+    if tag_id:
+        memories_ref = memories_ref.where(filter=FieldFilter('tag_ids', 'array_contains', tag_id))
 
     memories_ref = (
         memories_ref.order_by('scoring', direction=firestore.Query.DESCENDING)
@@ -347,3 +355,108 @@ def migrate_memories(prev_uid: str, new_uid: str, app_id: str = None):
     batch.commit()
     print(f'Migrated {len(memories_to_migrate)} memories from {prev_uid} to {new_uid}')
     return len(memories_to_migrate)
+
+
+# **************************************
+# ********* FOLDER/TAG HELPERS *********
+# **************************************
+
+
+def add_memory_to_folder(uid: str, memory_id: str, folder_id: str) -> None:
+    """Add a memory to a folder"""
+    memory_ref = db.collection(users_collection).document(uid).collection(memories_collection).document(memory_id)
+
+    memory_ref.update({
+        'folder_ids': firestore.ArrayUnion([folder_id]),
+        'updated_at': datetime.now(timezone.utc)
+    })
+
+
+def remove_memory_from_folder(uid: str, memory_id: str, folder_id: str) -> None:
+    """Remove a memory from a folder"""
+    memory_ref = db.collection(users_collection).document(uid).collection(memories_collection).document(memory_id)
+
+    memory_ref.update({
+        'folder_ids': firestore.ArrayRemove([folder_id]),
+        'updated_at': datetime.now(timezone.utc)
+    })
+
+
+def add_tag_to_memory(uid: str, memory_id: str, tag_id: str) -> None:
+    """Add a tag to a memory"""
+    memory_ref = db.collection(users_collection).document(uid).collection(memories_collection).document(memory_id)
+
+    memory_ref.update({
+        'tag_ids': firestore.ArrayUnion([tag_id]),
+        'updated_at': datetime.now(timezone.utc)
+    })
+
+
+def remove_tag_from_memory(uid: str, memory_id: str, tag_id: str) -> None:
+    """Remove a tag from a memory"""
+    memory_ref = db.collection(users_collection).document(uid).collection(memories_collection).document(memory_id)
+
+    memory_ref.update({
+        'tag_ids': firestore.ArrayRemove([tag_id]),
+        'updated_at': datetime.now(timezone.utc)
+    })
+
+
+def remove_folder_from_all_memories(uid: str, folder_id: str) -> int:
+    """
+    Remove a folder from all memories that contain it.
+    Returns the number of memories updated.
+    """
+    memories_ref = db.collection(users_collection).document(uid).collection(memories_collection)
+    query = memories_ref.where(filter=FieldFilter('folder_ids', 'array_contains', folder_id))
+
+    batch = db.batch()
+    count = 0
+
+    for doc in query.stream():
+        batch.update(doc.reference, {
+            'folder_ids': firestore.ArrayRemove([folder_id]),
+            'updated_at': datetime.now(timezone.utc)
+        })
+        count += 1
+
+        # Firestore batch limit is 500 operations
+        if count >= 499:
+            batch.commit()
+            batch = db.batch()
+            count = 0
+
+    if count > 0:
+        batch.commit()
+
+    return count
+
+
+def remove_tag_from_all_memories(uid: str, tag_id: str) -> int:
+    """
+    Remove a tag from all memories that contain it.
+    Returns the number of memories updated.
+    """
+    memories_ref = db.collection(users_collection).document(uid).collection(memories_collection)
+    query = memories_ref.where(filter=FieldFilter('tag_ids', 'array_contains', tag_id))
+
+    batch = db.batch()
+    count = 0
+
+    for doc in query.stream():
+        batch.update(doc.reference, {
+            'tag_ids': firestore.ArrayRemove([tag_id]),
+            'updated_at': datetime.now(timezone.utc)
+        })
+        count += 1
+
+        # Firestore batch limit is 500 operations
+        if count >= 499:
+            batch.commit()
+            batch = db.batch()
+            count = 0
+
+    if count > 0:
+        batch.commit()
+
+    return count

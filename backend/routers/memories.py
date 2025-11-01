@@ -35,12 +35,18 @@ def create_memory(memory: Memory, uid: str = Depends(auth.get_current_user_uid))
 
 
 @router.get('/v3/memories', tags=['memories'], response_model=List[MemoryDB])
-def get_memories(limit: int = 100, offset: int = 0, uid: str = Depends(auth.get_current_user_uid)):
+def get_memories(
+    limit: int = 100,
+    offset: int = 0,
+    folder_id: str = None,
+    tag_id: str = None,
+    uid: str = Depends(auth.get_current_user_uid)
+):
     # Use high limits for the first page
     # Warn: should remove
     if offset == 0:
         limit = 5000
-    memories = memories_db.get_memories(uid, limit, offset)
+    memories = memories_db.get_memories(uid, limit, offset, folder_id=folder_id, tag_id=tag_id)
     for memory in memories:
         if memory.get('is_locked', False):
             content = memory.get('content', '')
@@ -87,4 +93,36 @@ def update_memory_visibility(memory_id: str, value: str, uid: str = Depends(auth
         raise HTTPException(status_code=400, detail='Invalid visibility value')
     memories_db.change_memory_visibility(uid, memory_id, value)
     threading.Thread(target=update_personas_async, args=(uid,)).start()
+    return {'status': 'ok'}
+
+
+@router.post('/v3/memories/{memory_id}/folders/{folder_id}', tags=['memories'])
+def add_memory_to_folder(memory_id: str, folder_id: str, uid: str = Depends(auth.get_current_user_uid)):
+    """Add a memory to a folder"""
+    _validate_memory(uid, memory_id)
+    memories_db.add_memory_to_folder(uid, memory_id, folder_id)
+    return {'status': 'ok'}
+
+
+@router.delete('/v3/memories/{memory_id}/folders/{folder_id}', tags=['memories'])
+def remove_memory_from_folder(memory_id: str, folder_id: str, uid: str = Depends(auth.get_current_user_uid)):
+    """Remove a memory from a folder"""
+    _validate_memory(uid, memory_id)
+    memories_db.remove_memory_from_folder(uid, memory_id, folder_id)
+    return {'status': 'ok'}
+
+
+@router.post('/v3/memories/{memory_id}/tags/{tag_id}', tags=['memories'])
+def add_tag_to_memory(memory_id: str, tag_id: str, uid: str = Depends(auth.get_current_user_uid)):
+    """Add a tag to a memory"""
+    _validate_memory(uid, memory_id)
+    memories_db.add_tag_to_memory(uid, memory_id, tag_id)
+    return {'status': 'ok'}
+
+
+@router.delete('/v3/memories/{memory_id}/tags/{tag_id}', tags=['memories'])
+def remove_tag_from_memory(memory_id: str, tag_id: str, uid: str = Depends(auth.get_current_user_uid)):
+    """Remove a tag from a memory"""
+    _validate_memory(uid, memory_id)
+    memories_db.remove_tag_from_memory(uid, memory_id, tag_id)
     return {'status': 'ok'}

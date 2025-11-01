@@ -17,6 +17,8 @@ class Memory {
   bool deleted;
   MemoryVisibility visibility;
   bool isLocked;
+  List<String> folderIds;
+  List<String> tagIds;
 
   Memory({
     required this.id,
@@ -33,6 +35,8 @@ class Memory {
     this.deleted = false,
     required this.visibility,
     this.isLocked = false,
+    this.folderIds = const [],
+    this.tagIds = const [],
   });
 
   factory Memory.fromJson(Map<String, dynamic> json) {
@@ -56,6 +60,8 @@ class Memory {
           ? (MemoryVisibility.values.asNameMap()[json['visibility']] ?? MemoryVisibility.public)
           : MemoryVisibility.public,
       isLocked: json['is_locked'] ?? false,
+      folderIds: json['folder_ids'] != null ? List<String>.from(json['folder_ids']) : [],
+      tagIds: json['tag_ids'] != null ? List<String>.from(json['tag_ids']) : [],
     );
   }
 
@@ -75,6 +81,8 @@ class Memory {
       'deleted': deleted,
       'visibility': visibility,
       'is_locked': isLocked,
+      'folder_ids': folderIds,
+      'tag_ids': tagIds,
     };
   }
 }

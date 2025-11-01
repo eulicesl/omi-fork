@@ -23,6 +23,8 @@ from routers import (
     integration,
     conversations,
     memories,
+    folders,
+    tags,
     mcp,
     oauth,
     auth,
@@ -46,6 +48,8 @@ app.include_router(transcribe.router)
 app.include_router(conversations.router)
 app.include_router(action_items.router)
 app.include_router(memories.router)
+app.include_router(folders.router)
+app.include_router(tags.router)
 app.include_router(chat.router)
 app.include_router(plugins.router)
 app.include_router(speech_profile.router)

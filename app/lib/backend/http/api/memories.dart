@@ -92,3 +92,51 @@ Future<bool> editMemoryServer(String memoryId, String value) async {
   debugPrint('editMemory response: ${response.body}');
   return response.statusCode == 200;
 }
+
+Future<bool> addMemoryToFolderServer(String memoryId, String folderId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/memories/$memoryId/folders/$folderId',
+    headers: {},
+    method: 'POST',
+    body: '',
+  );
+  if (response == null) return false;
+  debugPrint('addMemoryToFolder response: ${response.body}');
+  return response.statusCode == 200;
+}
+
+Future<bool> removeMemoryFromFolderServer(String memoryId, String folderId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/memories/$memoryId/folders/$folderId',
+    headers: {},
+    method: 'DELETE',
+    body: '',
+  );
+  if (response == null) return false;
+  debugPrint('removeMemoryFromFolder response: ${response.body}');
+  return response.statusCode == 200;
+}
+
+Future<bool> addTagToMemoryServer(String memoryId, String tagId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/memories/$memoryId/tags/$tagId',
+    headers: {},
+    method: 'POST',
+    body: '',
+  );
+  if (response == null) return false;
+  debugPrint('addTagToMemory response: ${response.body}');
+  return response.statusCode == 200;
+}
+
+Future<bool> removeTagFromMemoryServer(String memoryId, String tagId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/memories/$memoryId/tags/$tagId',
+    headers: {},
+    method: 'DELETE',
+    body: '',
+  );
+  if (response == null) return false;
+  debugPrint('removeTagFromMemory response: ${response.body}');
+  return response.statusCode == 200;
+}

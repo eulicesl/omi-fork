@@ -47,6 +47,8 @@ class Memory(BaseModel):
     category: MemoryCategory = Field(description="The category of the memory", default=MemoryCategory.interesting)
     visibility: str = Field(description="The visibility of the memory", default='private')
     tags: List[str] = Field(description="The tags of the memory and learning", default=[])
+    folder_ids: List[str] = Field(description="IDs of folders this memory belongs to", default=[])
+    tag_ids: List[str] = Field(description="IDs of tags associated with this memory", default=[])
 
     @validator('category', pre=True)
     def map_legacy_categories(cls, v):
