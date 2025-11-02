@@ -595,9 +595,9 @@ void audioCaptureTTask(void *param)
         if (isCapturingAudio && connected) {
             size_t bytes_read = 0;
 
-            // Read audio data from I2S
+            // Read audio data from I2S with timeout to allow checking stop flag
             esp_err_t err = i2s_read(I2S_PORT, i2s_buffer, AUDIO_BUFFER_SIZE * sizeof(int16_t),
-                                     &bytes_read, portMAX_DELAY);
+                                     &bytes_read, pdMS_TO_TICKS(100));
 
             if (err == ESP_OK && bytes_read > 0) {
                 size_t samples_read = bytes_read / sizeof(int16_t);
@@ -617,12 +617,20 @@ void audioCaptureTTask(void *param)
                     chunk.n = AUDIO_BUFFER_SIZE * sizeof(int16_t); // 640 bytes
 #endif
 
-                    // Send to queue (drop oldest if full)
+                    // Send to queue with proper handling of queue-full condition
                     if (xQueueSend(audioQueue, &chunk, 0) != pdPASS) {
+                        // Queue full - attempt to drop oldest and retry
                         AudioChunk dump;
-                        xQueueReceive(audioQueue, &dump, 0); // Drop oldest
-                        xQueueSend(audioQueue, &chunk, 0);   // Add new
-                        Serial.println("Audio queue full, dropped oldest chunk.");
+                        if (xQueueReceive(audioQueue, &dump, 0) == pdPASS) {
+                            // Successfully removed oldest, now send new chunk
+                            if (xQueueSend(audioQueue, &chunk, 0) != pdPASS) {
+                                // Still failed - this shouldn't happen but log for debugging
+                                Serial.println("Audio queue send failed even after dropping oldest");
+                            }
+                        } else {
+                            // Failed to receive - queue might be empty now (race condition)
+                            Serial.println("Audio queue race condition detected");
+                        }
                     }
                 }
             }
