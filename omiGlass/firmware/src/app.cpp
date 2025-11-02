@@ -87,7 +87,7 @@ bool audioInitialized = false;
 // Audio chunk structure for queue
 typedef struct {
     size_t n;
-    uint8_t data[AUDIO_BUFFER_SIZE * 2]; // 320 samples * 2 bytes = 640 bytes (or 320 if using mu-law)
+    uint8_t data[AUDIO_BUFFER_SIZE * 2]; // Buffer is sized for the maximum possible audio chunk: 640 bytes for uncompressed PCM (320 samples * 2 bytes), or 320 bytes for compressed mu-law. Actual used size depends on mode.
 } AudioChunk;
 
 // FreeRTOS queue for audio chunks
