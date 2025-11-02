@@ -18,6 +18,8 @@ class MemoriesProvider extends ChangeNotifier {
   bool _excludeInteresting = false;
   List<Tuple2<MemoryCategory, int>> categories = [];
   MemoryCategory? selectedCategory;
+  String? _folderFilter;
+  List<String> _tagFilters = [];
 
   List<Memory> get memories => _memories;
   List<Memory> get unreviewed => _unreviewed;
@@ -25,6 +27,8 @@ class MemoriesProvider extends ChangeNotifier {
   String get searchQuery => _searchQuery;
   MemoryCategory? get categoryFilter => _categoryFilter;
   bool get excludeInteresting => _excludeInteresting;
+  String? get folderFilter => _folderFilter;
+  List<String> get tagFilters => _tagFilters;
 
   List<Memory> get filteredMemories {
     return _memories.where((memory) {
@@ -45,7 +49,25 @@ class MemoriesProvider extends ChangeNotifier {
         categoryMatch = true;
       }
 
-      return matchesSearch && categoryMatch;
+      // Apply folder filter
+      bool folderMatch = true;
+      if (_folderFilter != null) {
+        if (_folderFilter == 'unorganized') {
+          // Show memories not in any folder
+          folderMatch = memory.folderIds.isEmpty;
+        } else {
+          // Show memories in specific folder
+          folderMatch = memory.folderIds.contains(_folderFilter);
+        }
+      }
+
+      // Apply tag filters (AND logic - memory must have all selected tags)
+      bool tagMatch = true;
+      if (_tagFilters.isNotEmpty) {
+        tagMatch = _tagFilters.every((tagId) => memory.tagIds.contains(tagId));
+      }
+
+      return matchesSearch && categoryMatch && folderMatch && tagMatch;
     }).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
@@ -68,6 +90,37 @@ class MemoriesProvider extends ChangeNotifier {
   void setCategoryFilter(MemoryCategory? category) {
     _categoryFilter = category;
     _excludeInteresting = false; // Reset exclude filter when setting a category filter
+    notifyListeners();
+  }
+
+  void setFolderFilter(String? folderId) {
+    _folderFilter = folderId;
+    notifyListeners();
+  }
+
+  void addTagFilter(String tagId) {
+    if (!_tagFilters.contains(tagId)) {
+      _tagFilters.add(tagId);
+      notifyListeners();
+    }
+  }
+
+  void removeTagFilter(String tagId) {
+    _tagFilters.remove(tagId);
+    notifyListeners();
+  }
+
+  void setTagFilters(List<String> tagIds) {
+    _tagFilters = List.from(tagIds);
+    notifyListeners();
+  }
+
+  void clearFilters() {
+    _searchQuery = '';
+    _categoryFilter = null;
+    _excludeInteresting = false;
+    _folderFilter = null;
+    _tagFilters.clear();
     notifyListeners();
   }
 
@@ -284,5 +337,105 @@ class MemoriesProvider extends ChangeNotifier {
     }
 
     _setCategories();
+  }
+
+  // Folder operations
+  Future<void> addMemoryToFolder(Memory memory, String folderId) async {
+    bool success = await addMemoryToFolderServer(memory.id, folderId);
+
+    if (success) {
+      final idx = _memories.indexWhere((m) => m.id == memory.id);
+      if (idx != -1) {
+        if (!_memories[idx].folderIds.contains(folderId)) {
+          _memories[idx].folderIds.add(folderId);
+          notifyListeners();
+        }
+      }
+    }
+  }
+
+  Future<void> removeMemoryFromFolder(Memory memory, String folderId) async {
+    bool success = await removeMemoryFromFolderServer(memory.id, folderId);
+
+    if (success) {
+      final idx = _memories.indexWhere((m) => m.id == memory.id);
+      if (idx != -1) {
+        _memories[idx].folderIds.remove(folderId);
+        notifyListeners();
+      }
+    }
+  }
+
+  // Tag operations
+  Future<void> addTagToMemory(Memory memory, String tagId) async {
+    bool success = await addTagToMemoryServer(memory.id, tagId);
+
+    if (success) {
+      final idx = _memories.indexWhere((m) => m.id == memory.id);
+      if (idx != -1) {
+        if (!_memories[idx].tagIds.contains(tagId)) {
+          _memories[idx].tagIds.add(tagId);
+          notifyListeners();
+        }
+      }
+    }
+  }
+
+  Future<void> removeTagFromMemory(Memory memory, String tagId) async {
+    bool success = await removeTagFromMemoryServer(memory.id, tagId);
+
+    if (success) {
+      final idx = _memories.indexWhere((m) => m.id == memory.id);
+      if (idx != -1) {
+        _memories[idx].tagIds.remove(tagId);
+        notifyListeners();
+      }
+    }
+  }
+
+  // Batch operations
+  Future<void> setMemoryFolders(Memory memory, List<String> folderIds) async {
+    // Remove from folders not in the new list
+    for (var folderId in List.from(memory.folderIds)) {
+      if (!folderIds.contains(folderId)) {
+        await removeMemoryFromFolder(memory, folderId);
+      }
+    }
+
+    // Add to folders not already present
+    for (var folderId in folderIds) {
+      if (!memory.folderIds.contains(folderId)) {
+        await addMemoryToFolder(memory, folderId);
+      }
+    }
+  }
+
+  Future<void> setMemoryTags(Memory memory, List<String> tagIds) async {
+    // Remove tags not in the new list
+    for (var tagId in List.from(memory.tagIds)) {
+      if (!tagIds.contains(tagId)) {
+        await removeTagFromMemory(memory, tagId);
+      }
+    }
+
+    // Add tags not already present
+    for (var tagId in tagIds) {
+      if (!memory.tagIds.contains(tagId)) {
+        await addTagToMemory(memory, tagId);
+      }
+    }
+  }
+
+  // Helper methods
+  List<Memory> getMemoriesInFolder(String folderId) {
+    return _memories.where((m) => m.folderIds.contains(folderId)).toList();
+  }
+
+  List<Memory> getMemoriesWithTag(String tagId) {
+    return _memories.where((m) => m.tagIds.contains(tagId)).toList();
+  }
+
+  List<Memory> getUnorganizedMemories() {
+    return _memories.where((m) => m.folderIds.isEmpty).toList();
   }
 }
