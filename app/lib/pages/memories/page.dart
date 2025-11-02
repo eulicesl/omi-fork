@@ -15,6 +15,7 @@ import 'widgets/memory_item.dart';
 import 'widgets/memory_dialog.dart';
 import 'widgets/memory_review_sheet.dart';
 import 'widgets/memory_management_sheet.dart';
+import 'widgets/folder_selector_sheet.dart';
 
 // Filter options for the dropdown
 enum FilterOption { interesting, system, all }
@@ -448,6 +449,30 @@ class MemoriesPageState extends State<MemoriesPage> with AutomaticKeepAliveClien
                                         ),
                                       ),
                                     ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      showModalBottomSheet(
+                                        context: context,
+                                        backgroundColor: Colors.transparent,
+                                        isScrollControlled: true,
+                                        builder: (context) => const FolderSelectorSheet(),
+                                      );
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppStyles.backgroundSecondary,
+                                      foregroundColor: Colors.white,
+                                      padding: EdgeInsets.zero,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                    child: const Icon(FontAwesomeIcons.folder, size: 16),
                                   ),
                                 ),
                                 const SizedBox(width: 8),

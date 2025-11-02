@@ -8,6 +8,8 @@ import 'package:omi/pages/conversation_detail/page.dart';
 import 'package:omi/pages/conversation_detail/conversation_detail_provider.dart';
 import 'package:omi/providers/app_provider.dart';
 import 'package:omi/providers/conversation_provider.dart';
+import 'package:omi/providers/folder_provider.dart';
+import 'package:omi/providers/tag_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:omi/pages/memories/page.dart';
 import 'package:omi/pages/settings/usage_page.dart';
@@ -70,6 +72,38 @@ class MemoryItem extends StatelessWidget {
                         style: AppStyles.body,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Consumer2<FolderProvider, TagProvider>(
+                        builder: (context, folderProvider, tagProvider, _) {
+                          final folders = folderProvider.getFoldersForMemory(memory.folderIds);
+                          final tags = tagProvider.getTagsForMemory(memory.tagIds);
+
+                          if (folders.isEmpty && tags.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+
+                          return Wrap(
+                            spacing: 4,
+                            runSpacing: 4,
+                            children: [
+                              ...folders.map((folder) => _buildChip(
+                                label: folder.name,
+                                icon: Icons.folder,
+                                color: folder.color != null
+                                  ? Color(int.parse(folder.color!.replaceFirst('#', '0xFF')))
+                                  : Colors.blue,
+                              )),
+                              ...tags.map((tag) => _buildChip(
+                                label: tag.name,
+                                icon: Icons.label,
+                                color: tag.color != null
+                                  ? Color(int.parse(tag.color!.replaceFirst('#', '0xFF')))
+                                  : Colors.purple,
+                              )),
+                            ],
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -341,6 +375,36 @@ class MemoryItem extends StatelessWidget {
             if (isSelected) const Icon(Icons.check, size: 18, color: Colors.white),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildChip({
+    required String label,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.4), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
