@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:omi/backend/schema/bt_device/bt_device.dart';
 import 'package:omi/services/wals.dart';
+import 'package:omi/utils/audio/audio_error.dart';
 import 'package:opus_dart/opus_dart.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -21,10 +22,24 @@ class AudioPlayerUtils extends ChangeNotifier {
 
   final Map<String, String> _audioFileCache = {};
 
+  // Enhanced playback features
+  double _playbackSpeed = 1.0;
+  bool _isLooping = false;
+  Duration? _loopStart;
+  Duration? _loopEnd;
+  
+  // Error handling
+  AudioError? _lastError;
+
   String? get currentPlayingId => _currentPlayingId;
   bool get isProcessingAudio => _isProcessingAudio;
   Duration get currentPosition => _currentPosition;
   Duration get totalDuration => _totalDuration;
+  double get playbackSpeed => _playbackSpeed;
+  bool get isLooping => _isLooping;
+  Duration? get loopStart => _loopStart;
+  Duration? get loopEnd => _loopEnd;
+  AudioError? get lastError => _lastError;
 
   double get playbackProgress {
     if (_totalDuration.inMilliseconds <= 0) return 0.0;
@@ -58,6 +73,12 @@ class AudioPlayerUtils extends ChangeNotifier {
 
   Future<void> togglePlayback(Wal wal) async {
     if (!canPlayOrShare(wal)) {
+      _lastError = AudioError(
+        type: AudioErrorType.fileNotFound,
+        message: 'Audio file not available for playback',
+      );
+      _lastError?.log();
+      notifyListeners();
       throw Exception('Audio file not available for playback');
     }
 
@@ -68,7 +89,25 @@ class AudioPlayerUtils extends ChangeNotifier {
       return;
     }
 
-    await _startPlayback(wal);
+    try {
+      _lastError = null; // Clear previous errors
+      await _startPlayback(wal);
+    } catch (e, stackTrace) {
+      _lastError = AudioError.fromException(
+        e is Exception ? e : Exception(e.toString()),
+        stackTrace: stackTrace,
+      );
+      _lastError?.log();
+      _resetPlaybackState();
+      notifyListeners();
+      rethrow;
+    }
+  }
+  
+  /// Clear the last error
+  void clearError() {
+    _lastError = null;
+    notifyListeners();
   }
 
   Future<void> _stopPlayback() async {
@@ -86,21 +125,57 @@ class AudioPlayerUtils extends ChangeNotifier {
     _totalDuration = Duration.zero;
     notifyListeners();
 
-    final audioFilePath = await _getOrCreateAudioFile(wal);
-    if (audioFilePath == null) {
-      _resetPlaybackState();
-      throw Exception('Unable to create playable audio file');
+    try {
+      final audioFilePath = await _getOrCreateAudioFile(wal);
+      if (audioFilePath == null) {
+        _resetPlaybackState();
+        throw AudioError(
+          type: AudioErrorType.decodingFailed,
+          message: 'Unable to create playable audio file',
+          technicalDetails: 'File path returned null from conversion',
+        );
+      }
+
+      // Verify file exists before attempting playback
+      final file = File(audioFilePath);
+      if (!file.existsSync()) {
+        _resetPlaybackState();
+        throw AudioError(
+          type: AudioErrorType.fileNotFound,
+          message: 'Audio file does not exist',
+          technicalDetails: 'Path: $audioFilePath',
+        );
+      }
+
+      _currentPlayingId = wal.id;
+      _isProcessingAudio = false;
+
+      await _audioPlayer?.startPlayer(
+        fromURI: audioFilePath,
+        whenFinished: () => _onPlaybackFinished(),
+      );
+
+      // Apply playback speed if not default
+      if (_playbackSpeed != 1.0) {
+        try {
+          await _audioPlayer?.setSpeed(_playbackSpeed);
+        } catch (e) {
+          debugPrint('Error setting initial playback speed: $e');
+        }
+      }
+
+      _setupPositionTracking(wal);
+    } catch (e, stackTrace) {
+      _isProcessingAudio = false;
+      if (e is AudioError) {
+        rethrow;
+      }
+      throw AudioError(
+        type: AudioErrorType.playbackFailed,
+        message: 'Failed to start audio playback',
+        technicalDetails: e.toString(),
+      );
     }
-
-    _currentPlayingId = wal.id;
-    _isProcessingAudio = false;
-
-    await _audioPlayer?.startPlayer(
-      fromURI: audioFilePath,
-      whenFinished: () => _onPlaybackFinished(),
-    );
-
-    _setupPositionTracking(wal);
   }
 
   void _onPlaybackFinished() {
@@ -123,6 +198,7 @@ class AudioPlayerUtils extends ChangeNotifier {
       if (_currentPlayingId == wal.id) {
         _currentPosition = disposition.position;
         _totalDuration = disposition.duration;
+        _checkLoopBounds(); // Check for loop boundaries
         notifyListeners();
       }
     });
@@ -137,6 +213,7 @@ class AudioPlayerUtils extends ChangeNotifier {
         final estimatedPosition = _currentPosition + const Duration(milliseconds: 100);
         if (estimatedPosition <= _totalDuration) {
           _currentPosition = estimatedPosition;
+          _checkLoopBounds(); // Check for loop boundaries
           notifyListeners();
         }
       }
@@ -148,22 +225,41 @@ class AudioPlayerUtils extends ChangeNotifier {
 
   Future<void> shareAsAudio(Wal wal) async {
     if (!canPlayOrShare(wal)) {
+      _lastError = AudioError(
+        type: AudioErrorType.fileNotFound,
+        message: 'Audio file not available for sharing',
+      );
+      _lastError?.log();
+      notifyListeners();
       throw Exception('Audio file not available for sharing');
     }
 
-    final audioFilePath = await _getOrCreateAudioFile(wal, forSharing: true);
-    if (audioFilePath == null) {
-      throw Exception('Unable to create shareable audio file');
-    }
+    try {
+      final audioFilePath = await _getOrCreateAudioFile(wal, forSharing: true);
+      if (audioFilePath == null) {
+        throw AudioError(
+          type: AudioErrorType.decodingFailed,
+          message: 'Unable to create shareable audio file',
+        );
+      }
 
-    final result = await Share.shareXFiles(
-      [XFile(audioFilePath)],
-      text:
-          'Omi Audio Recording - ${DateTime.fromMillisecondsSinceEpoch(wal.timerStart * 1000).toString().split('.')[0]}',
-    );
+      final result = await Share.shareXFiles(
+        [XFile(audioFilePath)],
+        text:
+            'Omi Audio Recording - ${DateTime.fromMillisecondsSinceEpoch(wal.timerStart * 1000).toString().split('.')[0]}',
+      );
 
-    if (result.status == ShareResultStatus.success) {
-      debugPrint('Audio file shared successfully');
+      if (result.status == ShareResultStatus.success) {
+        debugPrint('Audio file shared successfully');
+      }
+    } catch (e, stackTrace) {
+      _lastError = AudioError.fromException(
+        e is Exception ? e : Exception(e.toString()),
+        stackTrace: stackTrace,
+      );
+      _lastError?.log();
+      notifyListeners();
+      rethrow;
     }
   }
 
@@ -403,6 +499,60 @@ class AudioPlayerUtils extends ChangeNotifier {
       final newPosition = _currentPosition - duration;
       final clampedPosition = newPosition < Duration.zero ? Duration.zero : newPosition;
       await seekToPosition(clampedPosition);
+    }
+  }
+
+  /// Set playback speed (0.5x to 2.0x)
+  Future<void> setPlaybackSpeed(double speed) async {
+    if (speed < 0.5 || speed > 2.0) {
+      debugPrint('Playback speed must be between 0.5 and 2.0');
+      return;
+    }
+    
+    _playbackSpeed = speed;
+    
+    if (_audioPlayer != null && _audioPlayer!.isPlaying) {
+      try {
+        await _audioPlayer!.setSpeed(speed);
+      } catch (e) {
+        debugPrint('Error setting playback speed: $e');
+      }
+    }
+    
+    notifyListeners();
+  }
+
+  /// Toggle loop mode
+  void toggleLoop() {
+    _isLooping = !_isLooping;
+    notifyListeners();
+  }
+
+  /// Set A-B loop points
+  void setLoopPoints({Duration? start, Duration? end}) {
+    _loopStart = start;
+    _loopEnd = end;
+    notifyListeners();
+  }
+
+  /// Clear A-B loop points
+  void clearLoopPoints() {
+    _loopStart = null;
+    _loopEnd = null;
+    notifyListeners();
+  }
+
+  /// Check if position is within loop bounds and handle looping
+  void _checkLoopBounds() {
+    if (!_isLooping) return;
+    
+    if (_loopEnd != null && _currentPosition >= _loopEnd!) {
+      // Loop back to start point
+      final startPoint = _loopStart ?? Duration.zero;
+      seekToPosition(startPoint);
+    } else if (_loopStart == null && _loopEnd == null && _currentPosition >= _totalDuration) {
+      // Full loop - restart from beginning
+      seekToPosition(Duration.zero);
     }
   }
 

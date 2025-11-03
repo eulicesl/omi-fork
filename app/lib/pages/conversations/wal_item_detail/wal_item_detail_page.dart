@@ -6,9 +6,11 @@ import 'package:omi/models/playback_state.dart';
 import 'package:omi/providers/sync_provider.dart';
 import 'package:omi/services/wals.dart';
 import 'package:omi/ui/molecules/omi_confirm_dialog.dart';
+import 'package:omi/utils/audio_keyboard_shortcuts.dart';
 import 'package:omi/utils/device.dart';
 import 'package:omi/utils/other/temp.dart';
 import 'package:omi/utils/other/time_utils.dart';
+import 'package:omi/widgets/audio_info_sheet.dart';
 import 'package:omi/widgets/waveform_section.dart';
 import 'package:provider/provider.dart';
 
@@ -93,20 +95,32 @@ class _WalItemDetailPageState extends State<WalItemDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        automaticallyImplyLeading: true,
-        title: Text('Recording Details', style: Theme.of(context).textTheme.titleLarge),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_horiz, color: Colors.white),
-            onPressed: () => _showOptionsMenu(context),
-          ),
-        ],
-      ),
-      backgroundColor: Theme.of(context).colorScheme.primary,
+    return AudioPlayerKeyboardShortcuts(
+      audioPlayerUtils: context.read<SyncProvider>().audioPlayerUtils,
+      currentWal: widget.wal,
+      onPlayPause: () => _handlePlayPause(context.read<SyncProvider>()),
+      onSkipForward: () => _handleSkipForward(context.read<SyncProvider>()),
+      onSkipBackward: () => _handleSkipBackward(context.read<SyncProvider>()),
+      onShowInfo: () => _showEnhancedInfoSheet(context),
+      child: Scaffold(
+        appBar: AppBar(
+          elevation: 0,
+          automaticallyImplyLeading: true,
+          title: Text('Recording Details', style: Theme.of(context).textTheme.titleLarge),
+          centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.keyboard, color: Colors.white),
+              tooltip: 'Keyboard shortcuts',
+              onPressed: () => KeyboardShortcutsHelp.show(context),
+            ),
+            IconButton(
+              icon: const Icon(Icons.more_horiz, color: Colors.white),
+              onPressed: () => _showOptionsMenu(context),
+            ),
+          ],
+        ),
+        backgroundColor: Theme.of(context).colorScheme.primary,
       body: Consumer<SyncProvider>(
         builder: (context, syncProvider, child) {
           final playbackState = _getPlaybackState(syncProvider);
@@ -199,33 +213,102 @@ class _WalItemDetailPageState extends State<WalItemDetailPage> {
               // Controls section
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                child: Column(
                   children: [
-                    _buildControlButton(
-                      icon: Icons.replay_10,
-                      onPressed: playbackState.canPlayOrShare && isPlaying
-                          ? () => _handleSkipBackward(context.read<SyncProvider>())
-                          : null,
-                      size: 60,
+                    // Playback speed selector
+                    Consumer<SyncProvider>(
+                      builder: (context, syncProvider, child) {
+                        final audioUtils = syncProvider.audioPlayerUtils;
+                        final speed = audioUtils?.playbackSpeed ?? 1.0;
+                        
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.speed, size: 16, color: Colors.grey.shade400),
+                            const SizedBox(width: 8),
+                            PopupMenuButton<double>(
+                              initialValue: speed,
+                              color: const Color(0xFF1A1A1A),
+                              onSelected: (value) {
+                                audioUtils?.setPlaybackSpeed(value);
+                              },
+                              itemBuilder: (context) => [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                  .map((s) => PopupMenuItem(
+                                        value: s,
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text('${s}x', style: TextStyle(color: s == speed ? Theme.of(context).colorScheme.secondary : Colors.white)),
+                                            if (s == speed) Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.secondary),
+                                          ],
+                                        ),
+                                      ))
+                                  .toList(),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Text(
+                                  '${speed.toStringAsFixed(2)}x',
+                                  style: TextStyle(color: Colors.grey.shade300, fontSize: 14),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            InkWell(
+                              onTap: () {
+                                audioUtils?.toggleLoop();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: (audioUtils?.isLooping ?? false) ? Theme.of(context).colorScheme.secondary.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Icon(
+                                  Icons.repeat,
+                                  size: 16,
+                                  color: (audioUtils?.isLooping ?? false) ? Theme.of(context).colorScheme.secondary : Colors.grey.shade400,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
-                    _buildControlButton(
-                      icon: playbackState.isProcessing
-                          ? Icons.hourglass_empty
-                          : (isPlaying ? Icons.pause : Icons.play_arrow),
-                      size: 80,
-                      backgroundColor: Theme.of(context).colorScheme.secondary,
-                      iconColor: Colors.white,
-                      onPressed: playbackState.canPlayOrShare && !playbackState.isProcessing
-                          ? () => _handlePlayPause(context.read<SyncProvider>())
-                          : null,
-                    ),
-                    _buildControlButton(
-                      icon: Icons.forward_10,
-                      onPressed: playbackState.canPlayOrShare && isPlaying
-                          ? () => _handleSkipForward(context.read<SyncProvider>())
-                          : null,
-                      size: 60,
+                    const SizedBox(height: 16),
+                    // Main playback controls
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildControlButton(
+                          icon: Icons.replay_10,
+                          onPressed: playbackState.canPlayOrShare && isPlaying
+                              ? () => _handleSkipBackward(context.read<SyncProvider>())
+                              : null,
+                          size: 60,
+                        ),
+                        _buildControlButton(
+                          icon: playbackState.isProcessing
+                              ? Icons.hourglass_empty
+                              : (isPlaying ? Icons.pause : Icons.play_arrow),
+                          size: 80,
+                          backgroundColor: Theme.of(context).colorScheme.secondary,
+                          iconColor: Colors.white,
+                          onPressed: playbackState.canPlayOrShare && !playbackState.isProcessing
+                              ? () => _handlePlayPause(context.read<SyncProvider>())
+                              : null,
+                        ),
+                        _buildControlButton(
+                          icon: Icons.forward_10,
+                          onPressed: playbackState.canPlayOrShare && isPlaying
+                              ? () => _handleSkipForward(context.read<SyncProvider>())
+                              : null,
+                          size: 60,
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -235,6 +318,7 @@ class _WalItemDetailPageState extends State<WalItemDetailPage> {
             ],
           );
         },
+      ),
       ),
     );
   }
@@ -302,7 +386,7 @@ class _WalItemDetailPageState extends State<WalItemDetailPage> {
               title: Text('Recording Info', style: Theme.of(context).textTheme.bodyMedium),
               onTap: () {
                 Navigator.pop(context);
-                _showFileDetailsDialog(context);
+                _showEnhancedInfoSheet(context);
               },
             ),
             ListTile(
@@ -326,6 +410,12 @@ class _WalItemDetailPageState extends State<WalItemDetailPage> {
         ),
       ),
     );
+  }
+  
+  void _showEnhancedInfoSheet(BuildContext context) {
+    final syncProvider = context.read<SyncProvider>();
+    final audioPath = syncProvider.audioPlayerUtils?.getCachedAudioPath(widget.wal.id);
+    AudioInfoSheet.show(context, wal: widget.wal, audioFilePath: audioPath);
   }
 
   void _showDeleteDialog(BuildContext context) async {
@@ -442,7 +532,7 @@ class _WalItemDetailPageState extends State<WalItemDetailPage> {
         break;
       case BleAudioCodec.mulaw16:
       case BleAudioCodec.mulaw8:
-        bytesPerSecond = widget.wal.sampleRate * 1 * widget.wal.channel; // μ-law is 8-bit encoded
+        bytesPerSecond = widget.wal.sampleRate * 1 * widget.wal.channel; // ?-law is 8-bit encoded
         break;
       default:
         bytesPerSecond = 8000;

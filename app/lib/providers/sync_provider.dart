@@ -55,6 +55,7 @@ class SyncProvider extends ChangeNotifier implements IWalServiceListener, IWalSy
   Wal? get failedWal => _syncState.failedWal;
 
   // Audio playback delegates
+  AudioPlayerUtils get audioPlayerUtils => _audioPlayerUtils;
   String? get currentPlayingWalId => _audioPlayerUtils.currentPlayingId;
   bool get isProcessingAudio => _audioPlayerUtils.isProcessingAudio;
   Duration get currentPosition => _audioPlayerUtils.currentPosition;
