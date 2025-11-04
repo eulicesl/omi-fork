@@ -412,6 +412,7 @@ def remove_folder_from_all_memories(uid: str, folder_id: str) -> int:
 
     batch = db.batch()
     count = 0
+    total_count = 0
 
     for doc in query.stream():
         batch.update(doc.reference, {
@@ -419,6 +420,7 @@ def remove_folder_from_all_memories(uid: str, folder_id: str) -> int:
             'updated_at': datetime.now(timezone.utc)
         })
         count += 1
+        total_count += 1
 
         # Firestore batch limit is 500 operations
         if count >= 499:
@@ -429,7 +431,7 @@ def remove_folder_from_all_memories(uid: str, folder_id: str) -> int:
     if count > 0:
         batch.commit()
 
-    return count
+    return total_count
 
 
 def remove_tag_from_all_memories(uid: str, tag_id: str) -> int:
@@ -442,6 +444,7 @@ def remove_tag_from_all_memories(uid: str, tag_id: str) -> int:
 
     batch = db.batch()
     count = 0
+    total_count = 0
 
     for doc in query.stream():
         batch.update(doc.reference, {
@@ -449,6 +452,7 @@ def remove_tag_from_all_memories(uid: str, tag_id: str) -> int:
             'updated_at': datetime.now(timezone.utc)
         })
         count += 1
+        total_count += 1
 
         # Firestore batch limit is 500 operations
         if count >= 499:
@@ -459,4 +463,4 @@ def remove_tag_from_all_memories(uid: str, tag_id: str) -> int:
     if count > 0:
         batch.commit()
 
-    return count
+    return total_count
