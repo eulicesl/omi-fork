@@ -1,5 +1,5 @@
 import threading
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -38,8 +38,8 @@ def create_memory(memory: Memory, uid: str = Depends(auth.get_current_user_uid))
 def get_memories(
     limit: int = 100,
     offset: int = 0,
-    folder_id: str = None,
-    tag_id: str = None,
+    folder_id: Optional[str] = None,
+    tag_id: Optional[str] = None,
     uid: str = Depends(auth.get_current_user_uid)
 ):
     # Use high limits for the first page

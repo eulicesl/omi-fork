@@ -1,9 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
-from google.cloud import firestore
-from google.cloud.firestore_v1 import FieldFilter
-
 from ._client import db
 
 users_collection = 'users'
