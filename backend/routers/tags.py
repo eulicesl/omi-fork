@@ -75,5 +75,15 @@ def delete_tag(
     if tag is None:
         raise HTTPException(status_code=404, detail="Tag not found")
 
+    # Clean up tag references in conversations
+    import database.conversations as conversations_db
+    from models.conversation import Conversation
+    conversations = conversations_db.get_conversations(uid, limit=1000, offset=0)
+    for conv in conversations:
+        conversation_obj = Conversation(**conv)
+        if tag_id in conversation_obj.tag_ids:
+            updated_tags = [tid for tid in conversation_obj.tag_ids if tid != tag_id]
+            conversations_db.update_conversation(uid, conv['id'], {'tag_ids': updated_tags})
+
     tags_db.delete_tag(uid, tag_id)
     return {"message": "Tag deleted successfully"}

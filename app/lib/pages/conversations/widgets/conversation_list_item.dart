@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:omi/backend/preferences.dart';
 import 'package:omi/backend/schema/conversation.dart';
+import 'package:omi/backend/schema/tag.dart';
 import 'package:omi/pages/conversation_detail/conversation_detail_provider.dart';
 import 'package:omi/pages/conversation_detail/page.dart';
 import 'package:omi/pages/settings/usage_page.dart';
@@ -278,11 +279,22 @@ class _ConversationListItemState extends State<ConversationListItem> {
             ...widget.conversation.tagIds.take(3).map((tagId) {
               final tag = tagProvider.tags.firstWhere(
                 (t) => t.id == tagId,
-                orElse: () => tagProvider.tags.first,
+                orElse: () => Tag(
+                  id: tagId,
+                  uid: '',
+                  name: 'Unknown',
+                  createdAt: DateTime.now(),
+                  updatedAt: DateTime.now(),
+                ),
               );
-              final tagColor = tag.color != null
-                  ? Color(int.parse(tag.color!.replaceFirst('#', '0xFF')))
-                  : Colors.purple;
+              Color tagColor = Colors.purple;
+              if (tag.color != null) {
+                try {
+                  tagColor = Color(int.parse(tag.color!.replaceFirst('#', '0xFF')));
+                } catch (e) {
+                  debugPrint('Error parsing tag color: ${tag.color}');
+                }
+              }
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(

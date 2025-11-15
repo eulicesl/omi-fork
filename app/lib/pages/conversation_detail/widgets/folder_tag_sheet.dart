@@ -222,6 +222,15 @@ class _FolderTagSheetState extends State<FolderTagSheet> {
   }
 
   Widget _buildTagChip(Tag tag, bool isSelected) {
+    Color selectedColor = Colors.purple.withOpacity(0.3);
+    if (tag.color != null) {
+      try {
+        selectedColor = Color(int.parse(tag.color!.replaceFirst('#', '0xFF')));
+      } catch (e) {
+        debugPrint('Error parsing tag color: ${tag.color}');
+      }
+    }
+
     return FilterChip(
       label: Text(tag.name),
       selected: isSelected,
@@ -234,7 +243,7 @@ class _FolderTagSheetState extends State<FolderTagSheet> {
           }
         });
       },
-      selectedColor: tag.color != null ? Color(int.parse(tag.color!.replaceFirst('#', '0xFF'))) : Colors.purple.withOpacity(0.3),
+      selectedColor: selectedColor,
       checkmarkColor: Colors.white,
       labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontSize: 12),
       backgroundColor: Colors.white.withOpacity(0.1),

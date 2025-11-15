@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -620,7 +620,7 @@ def test_prompt(conversation_id: str, request: TestPromptRequest, uid: str = Dep
 @router.patch("/v3/conversations/{conversation_id}/folder", response_model=Conversation, tags=['conversations'])
 def set_conversation_folder(
     conversation_id: str,
-    folder_id: Optional[str] = None,
+    folder_id: Optional[str] = Body(None, embed=True),
     uid: str = Depends(auth.get_current_user_uid)
 ):
     """Set or remove the folder for a conversation"""

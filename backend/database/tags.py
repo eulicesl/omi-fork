@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from google.cloud.firestore_v1 import FieldFilter
 from ._client import db
 
 
