@@ -541,13 +541,13 @@ class ConversationProvider extends ChangeNotifier {
   /////////////////////////////////////////////////////////////////
   ////////// Merge Conversations Functionality ///////////////
 
-  Future<ServerConversation?> mergeSelectedConversations(List<String> conversationIds) async {
+  Future<(ServerConversation?, String?)> mergeSelectedConversations(List<String> conversationIds) async {
     if (conversationIds.length < 2) {
-      return null;
+      return (null, 'At least 2 conversations required');
     }
 
     // Call API to merge conversations
-    var mergedConversation = await mergeConversations(conversationIds);
+    var (mergedConversation, errorMessage) = await mergeConversations(conversationIds);
 
     if (mergedConversation != null) {
       // Remove merged conversations from local lists
@@ -567,7 +567,7 @@ class ConversationProvider extends ChangeNotifier {
       MixpanelManager().conversationsMerged(conversationIds.length);
     }
 
-    return mergedConversation;
+    return (mergedConversation, errorMessage);
   }
 
   /////////////////////////////////////////////////////////////////

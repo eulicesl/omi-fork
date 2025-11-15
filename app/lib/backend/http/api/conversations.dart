@@ -456,7 +456,7 @@ Future<bool> updateActionItemStateByMetadata(
 // ******** MERGE CONVERSATIONS ****
 // *********************************
 
-Future<ServerConversation?> mergeConversations(List<String> conversationIds) async {
+Future<(ServerConversation?, String?)> mergeConversations(List<String> conversationIds) async {
   var response = await makeApiCall(
     url: '${Env.apiBaseUrl}v1/conversations/merge',
     headers: {},
@@ -465,13 +465,19 @@ Future<ServerConversation?> mergeConversations(List<String> conversationIds) asy
       'conversation_ids': conversationIds,
     }),
   );
-  if (response == null) return null;
+  if (response == null) return (null, 'Network error. Please try again.');
   debugPrint('mergeConversations: ${response.body}');
   if (response.statusCode == 200) {
-    return ServerConversation.fromJson(jsonDecode(response.body));
+    return (ServerConversation.fromJson(jsonDecode(response.body)), null);
   } else if (response.statusCode == 400) {
-    // Return error message in debug print
-    debugPrint('mergeConversations error: ${jsonDecode(response.body)['detail']}');
+    // Extract and return error message from backend
+    try {
+      String errorMessage = jsonDecode(response.body)['detail'] ?? 'Failed to merge conversations';
+      debugPrint('mergeConversations error: $errorMessage');
+      return (null, errorMessage);
+    } catch (e) {
+      return (null, 'Failed to merge conversations');
+    }
   }
-  return null;
+  return (null, 'Unexpected error occurred');
 }

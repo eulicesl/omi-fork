@@ -81,7 +81,7 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
     );
 
     try {
-      var mergedConversation = await provider.mergeSelectedConversations(_selectedConversationIds.toList());
+      var (mergedConversation, errorMessage) = await provider.mergeSelectedConversations(_selectedConversationIds.toList());
 
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
@@ -92,13 +92,15 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
           SnackBar(
             content: Text('Successfully merged ${_selectedConversationIds.length} conversations'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
           ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to merge conversations. Please ensure they are consecutive.'),
+          SnackBar(
+            content: Text(errorMessage ?? 'Failed to merge conversations'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4), // Extended duration for error messages
           ),
         );
       }
@@ -109,6 +111,7 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
         SnackBar(
           content: Text('Error: ${e.toString()}'),
           backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
         ),
       );
     }

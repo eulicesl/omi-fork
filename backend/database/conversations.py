@@ -735,6 +735,10 @@ def merge_conversations(uid: str, conversation_ids: List[str]) -> Tuple[Optional
         conv = get_conversation(uid, conv_id)
         if not conv:
             return None, f"Conversation {conv_id} not found"
+        if conv.get('is_locked', False):
+            return None, "Cannot merge locked conversations. Please unlock them first."
+        if conv.get('discarded', False):
+            return None, "Cannot merge discarded conversations."
         conversations.append(conv)
 
     # Sort conversations by created_at timestamp

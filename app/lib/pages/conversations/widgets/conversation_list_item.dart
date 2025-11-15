@@ -78,6 +78,26 @@ class _ConversationListItemState extends State<ConversationListItem> {
         onTap: () async {
           // Handle selection mode tap
           if (widget.isSelectionMode) {
+            // Prevent selecting locked conversations
+            if (widget.conversation.isLocked) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cannot select locked conversations'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+              return;
+            }
+            // Prevent selecting discarded conversations
+            if (widget.conversation.discarded) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cannot select discarded conversations'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+              return;
+            }
             widget.onSelectionToggle?.call();
             return;
           }
