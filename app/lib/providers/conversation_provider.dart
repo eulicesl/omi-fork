@@ -419,6 +419,10 @@ class ConversationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateConversationInList(ServerConversation conversation) {
+    updateConversationInSortedList(conversation);
+  }
+
   (int, DateTime) addConversationWithDateGrouped(ServerConversation conversation) {
     conversations.insert(0, conversation);
     conversations.sort((a, b) => b.createdAt.compareTo(a.createdAt));

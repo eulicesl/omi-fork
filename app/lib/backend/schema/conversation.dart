@@ -148,6 +148,9 @@ class ServerConversation {
   final bool deleted;
   final bool isLocked;
 
+  String? folderId;
+  List<String> tagIds;
+
   // local label
   bool isNew = false;
 
@@ -169,6 +172,8 @@ class ServerConversation {
     this.externalIntegration,
     this.status = ConversationStatus.completed,
     this.isLocked = false,
+    this.folderId,
+    this.tagIds = const [],
   });
 
   factory ServerConversation.fromJson(Map<String, dynamic> json) {
@@ -199,6 +204,8 @@ class ServerConversation {
           ? ConversationStatus.values.asNameMap()[json['status']] ?? ConversationStatus.completed
           : ConversationStatus.completed,
       isLocked: json['is_locked'] ?? false,
+      folderId: json['folder_id'],
+      tagIds: json['tag_ids'] != null ? List<String>.from(json['tag_ids']) : [],
     );
   }
 
@@ -221,6 +228,8 @@ class ServerConversation {
       'external_data': externalIntegration?.toJson(),
       'status': status.toString().split('.').last,
       'is_locked': isLocked,
+      'folder_id': folderId,
+      'tag_ids': tagIds,
     };
   }
 

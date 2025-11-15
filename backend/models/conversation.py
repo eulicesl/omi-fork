@@ -61,6 +61,8 @@ class CategoryEnum(str, Enum):
 class UpdateConversation(BaseModel):
     title: Optional[str] = None
     overview: Optional[str] = None
+    folder_id: Optional[str] = None
+    tag_ids: Optional[List[str]] = None
 
 
 class ConversationPhoto(BaseModel):
@@ -298,6 +300,9 @@ class Conversation(BaseModel):
     status: Optional[ConversationStatus] = ConversationStatus.completed
     is_locked: bool = False
     data_protection_level: Optional[str] = None
+
+    folder_id: Optional[str] = Field(default=None, description="ID of the folder this conversation belongs to")
+    tag_ids: List[str] = Field(default=[], description="IDs of tags associated with this conversation")
 
     def __init__(self, **data):
         super().__init__(**data)

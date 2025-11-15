@@ -10,9 +10,11 @@ import 'package:omi/pages/settings/asana_settings_page.dart';
 import 'package:omi/pages/settings/clickup_settings_page.dart';
 import 'package:omi/providers/app_provider.dart';
 import 'package:omi/providers/auth_provider.dart';
+import 'package:omi/providers/folder_provider.dart';
 import 'package:omi/providers/home_provider.dart';
 import 'package:omi/providers/message_provider.dart';
 import 'package:omi/providers/people_provider.dart';
+import 'package:omi/providers/tag_provider.dart';
 import 'package:omi/providers/task_integration_provider.dart';
 import 'package:omi/providers/usage_provider.dart';
 import 'package:omi/providers/user_provider.dart';
@@ -239,6 +241,8 @@ class _AppShellState extends State<AppShell> {
         context.read<HomeProvider>().setupUserPrimaryLanguage();
         context.read<UserProvider>().initialize();
         context.read<PeopleProvider>().initialize();
+        context.read<FolderProvider>().loadFolders();
+        context.read<TagProvider>().loadTags();
         try {
           await PlatformManager.instance.intercom.loginIdentifiedUser(SharedPreferencesUtil().uid);
         } catch (e) {

@@ -28,6 +28,7 @@ import 'package:pull_down_button/pull_down_button.dart';
 
 import 'conversation_detail_provider.dart';
 import 'widgets/name_speaker_sheet.dart';
+import 'widgets/folder_tag_sheet.dart';
 // import 'share.dart';
 import 'test_prompts.dart';
 // import 'package:omi/pages/settings/developer.dart';
@@ -224,6 +225,19 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
     );
 
     switch (value) {
+      case 'organize':
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (context) => FolderTagSheet(
+            conversation: provider.conversation,
+            onUpdate: (updated) {
+              provider.updateConversationData(updated);
+            },
+          ),
+        );
+        break;
       case 'copy_transcript':
         _copyContent(context, provider.conversation.getTranscript(generate: true));
         break;
@@ -515,6 +529,12 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
                         margin: const EdgeInsets.only(right: 8),
                         child: PullDownButton(
                           itemBuilder: (context) => [
+                            PullDownMenuItem(
+                              title: 'Organize',
+                              iconWidget: FaIcon(FontAwesomeIcons.folderOpen, size: 16),
+                              onTap: () => _handleMenuSelection(context, 'organize', provider),
+                            ),
+                            const PullDownMenuDivider(),
                             PullDownMenuItem(
                               title: 'Copy Transcript',
                               iconWidget: FaIcon(FontAwesomeIcons.copy, size: 16),

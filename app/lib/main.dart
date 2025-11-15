@@ -44,6 +44,8 @@ import 'package:omi/providers/speech_profile_provider.dart';
 import 'package:omi/providers/sync_provider.dart';
 import 'package:omi/providers/usage_provider.dart';
 import 'package:omi/providers/user_provider.dart';
+import 'package:omi/providers/folder_provider.dart';
+import 'package:omi/providers/tag_provider.dart';
 import 'package:omi/services/auth_service.dart';
 import 'package:omi/services/notifications.dart';
 import 'package:omi/services/notifications/action_item_notification_handler.dart';
@@ -297,6 +299,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           ChangeNotifierProvider(create: (context) => ActionItemsProvider()),
           ChangeNotifierProvider(create: (context) => SyncProvider()),
           ChangeNotifierProvider(create: (context) => TaskIntegrationProvider()),
+          ChangeNotifierProvider(create: (context) => FolderProvider()),
+          ChangeNotifierProvider(create: (context) => TagProvider()),
         ],
         builder: (context, child) {
           return WithForegroundTask(
