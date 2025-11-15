@@ -615,3 +615,52 @@ def test_prompt(conversation_id: str, request: TestPromptRequest, uid: str = Dep
     summary = generate_summary_with_prompt(full_transcript, request.prompt)
 
     return {"summary": summary}
+
+
+@router.patch("/v3/conversations/{conversation_id}/folder", response_model=Conversation, tags=['conversations'])
+def set_conversation_folder(
+    conversation_id: str,
+    folder_id: Optional[str] = None,
+    uid: str = Depends(auth.get_current_user_uid)
+):
+    """Set or remove the folder for a conversation"""
+    conversation = _get_valid_conversation_by_id(uid, conversation_id)
+    conversations_db.update_conversation(uid, conversation_id, {'folder_id': folder_id})
+    updated_conversation = conversations_db.get_conversation(uid, conversation_id)
+    return Conversation(**updated_conversation)
+
+
+@router.post("/v3/conversations/{conversation_id}/tags/{tag_id}", response_model=Conversation, tags=['conversations'])
+def add_conversation_tag(
+    conversation_id: str,
+    tag_id: str,
+    uid: str = Depends(auth.get_current_user_uid)
+):
+    """Add a tag to a conversation"""
+    conversation = _get_valid_conversation_by_id(uid, conversation_id)
+    conversation_obj = Conversation(**conversation)
+
+    if tag_id not in conversation_obj.tag_ids:
+        tag_ids = conversation_obj.tag_ids + [tag_id]
+        conversations_db.update_conversation(uid, conversation_id, {'tag_ids': tag_ids})
+
+    updated_conversation = conversations_db.get_conversation(uid, conversation_id)
+    return Conversation(**updated_conversation)
+
+
+@router.delete("/v3/conversations/{conversation_id}/tags/{tag_id}", response_model=Conversation, tags=['conversations'])
+def remove_conversation_tag(
+    conversation_id: str,
+    tag_id: str,
+    uid: str = Depends(auth.get_current_user_uid)
+):
+    """Remove a tag from a conversation"""
+    conversation = _get_valid_conversation_by_id(uid, conversation_id)
+    conversation_obj = Conversation(**conversation)
+
+    if tag_id in conversation_obj.tag_ids:
+        tag_ids = [tid for tid in conversation_obj.tag_ids if tid != tag_id]
+        conversations_db.update_conversation(uid, conversation_id, {'tag_ids': tag_ids})
+
+    updated_conversation = conversations_db.get_conversation(uid, conversation_id)
+    return Conversation(**updated_conversation)

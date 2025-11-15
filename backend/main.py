@@ -30,6 +30,8 @@ from routers import (
     task_integrations,
     other,
     developer,
+    folders,
+    tags,
 )
 
 from utils.other.timeout import TimeoutMiddleware
@@ -47,6 +49,8 @@ app.include_router(transcribe.router)
 app.include_router(conversations.router)
 app.include_router(action_items.router)
 app.include_router(task_integrations.router)
+app.include_router(folders.router)
+app.include_router(tags.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
 app.include_router(plugins.router)

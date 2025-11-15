@@ -451,3 +451,70 @@ Future<bool> updateActionItemStateByMetadata(
 ) async {
   return await setConversationActionItemState(conversationId, [itemIndex], [newState]);
 }
+
+// Folder/Tag management for conversations
+Future<ServerConversation?> setConversationFolder(String conversationId, String? folderId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/conversations/$conversationId/folder',
+    headers: {},
+    method: 'PATCH',
+    body: jsonEncode({'folder_id': folderId}),
+  );
+
+  if (response == null || response.statusCode != 200) {
+    debugPrint('setConversationFolder error ${response?.statusCode}');
+    return null;
+  }
+
+  try {
+    var body = utf8.decode(response.bodyBytes);
+    return ServerConversation.fromJson(jsonDecode(body));
+  } catch (e) {
+    debugPrint('Error parsing conversation: $e');
+    return null;
+  }
+}
+
+Future<ServerConversation?> addConversationTag(String conversationId, String tagId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/conversations/$conversationId/tags/$tagId',
+    headers: {},
+    method: 'POST',
+    body: '',
+  );
+
+  if (response == null || response.statusCode != 200) {
+    debugPrint('addConversationTag error ${response?.statusCode}');
+    return null;
+  }
+
+  try {
+    var body = utf8.decode(response.bodyBytes);
+    return ServerConversation.fromJson(jsonDecode(body));
+  } catch (e) {
+    debugPrint('Error parsing conversation: $e');
+    return null;
+  }
+}
+
+Future<ServerConversation?> removeConversationTag(String conversationId, String tagId) async {
+  var response = await makeApiCall(
+    url: '${Env.apiBaseUrl}v3/conversations/$conversationId/tags/$tagId',
+    headers: {},
+    method: 'DELETE',
+    body: '',
+  );
+
+  if (response == null || response.statusCode != 200) {
+    debugPrint('removeConversationTag error ${response?.statusCode}');
+    return null;
+  }
+
+  try {
+    var body = utf8.decode(response.bodyBytes);
+    return ServerConversation.fromJson(jsonDecode(body));
+  } catch (e) {
+    debugPrint('Error parsing conversation: $e');
+    return null;
+  }
+}

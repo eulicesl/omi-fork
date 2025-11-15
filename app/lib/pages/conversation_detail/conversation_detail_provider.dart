@@ -428,6 +428,15 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
     notifyListeners();
   }
 
+  void updateConversationData(ServerConversation updatedConversation) {
+    _cachedConversation = updatedConversation;
+    // Also update in conversation provider if available
+    if (conversationProvider != null) {
+      conversationProvider!.updateConversationInList(updatedConversation);
+    }
+    notifyListeners();
+  }
+
   String? _preferredSummarizationAppId;
 
   String? get preferredSummarizationAppId => _preferredSummarizationAppId;

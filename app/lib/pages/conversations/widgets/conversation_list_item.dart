@@ -5,12 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:omi/backend/preferences.dart';
 import 'package:omi/backend/schema/conversation.dart';
-import 'package:omi/backend/schema/structured.dart';
 import 'package:omi/pages/conversation_detail/conversation_detail_provider.dart';
 import 'package:omi/pages/conversation_detail/page.dart';
 import 'package:omi/pages/settings/usage_page.dart';
 import 'package:omi/providers/connectivity_provider.dart';
 import 'package:omi/providers/conversation_provider.dart';
+import 'package:omi/providers/folder_provider.dart';
+import 'package:omi/providers/tag_provider.dart';
 import 'package:omi/utils/analytics/mixpanel.dart';
 import 'package:omi/utils/other/temp.dart';
 import 'package:omi/utils/other/time_utils.dart';
@@ -64,7 +65,6 @@ class _ConversationListItemState extends State<ConversationListItem> {
       });
     }
 
-    Structured structured = widget.conversation.structured;
     return Consumer<ConversationProvider>(builder: (context, provider, child) {
       return GestureDetector(
         onTap: () async {
@@ -237,8 +237,87 @@ class _ConversationListItemState extends State<ConversationListItem> {
             if (widget.conversation.isLocked) _buildLockedOverlay(),
           ],
         ),
+        if (widget.conversation.folderId != null || widget.conversation.tagIds.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _buildFolderTagChips(context),
+        ],
         const SizedBox(height: 8),
       ],
+    );
+  }
+
+  Widget _buildFolderTagChips(BuildContext context) {
+    return Consumer2<FolderProvider, TagProvider>(
+      builder: (context, folderProvider, tagProvider, _) {
+        return Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: [
+            // Folder chip
+            if (widget.conversation.folderId != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.folder, size: 12, color: Colors.blue),
+                    const SizedBox(width: 4),
+                    Text(
+                      folderProvider.getFolder(widget.conversation.folderId!)?.name ?? 'Folder',
+                      style: const TextStyle(color: Colors.blue, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            // Tag chips
+            ...widget.conversation.tagIds.take(3).map((tagId) {
+              final tag = tagProvider.tags.firstWhere(
+                (t) => t.id == tagId,
+                orElse: () => tagProvider.tags.first,
+              );
+              final tagColor = tag.color != null
+                  ? Color(int.parse(tag.color!.replaceFirst('#', '0xFF')))
+                  : Colors.purple;
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: tagColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.label, size: 12, color: tagColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      tag.name,
+                      style: TextStyle(color: tagColor, fontSize: 11),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+            // Show "+X more" if there are more than 3 tags
+            if (widget.conversation.tagIds.length > 3)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '+${widget.conversation.tagIds.length - 3}',
+                  style: const TextStyle(color: Colors.grey, fontSize: 11),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
