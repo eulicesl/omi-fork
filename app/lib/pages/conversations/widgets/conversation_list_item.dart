@@ -257,28 +257,30 @@ class _ConversationListItemState extends State<ConversationListItem> {
           children: [
             // Folder chip
             if (widget.conversation.folderId != null) ...[
-              (() {
-                final folder = folderProvider.getFolder(widget.conversation.folderId!);
-                final folderColor = parseHexColor(folder?.color, Colors.blue);
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: folderColor.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.folder, size: 12, color: folderColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        folder?.name ?? 'Folder',
-                        style: TextStyle(color: folderColor, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                );
-              })(),
+              Builder(
+                builder: (context) {
+                  final folder = folderProvider.getFolder(widget.conversation.folderId!);
+                  final folderColor = parseHexColor(folder?.color, Colors.blue);
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: folderColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.folder, size: 12, color: folderColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          folder?.name ?? 'Folder',
+                          style: TextStyle(color: folderColor, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ],
             // Tag chips
             ...widget.conversation.tagIds.take(3).map((tagId) {

@@ -43,11 +43,15 @@ class _FolderTagSheetState extends State<FolderTagSheet> {
     setState(() => _isLoading = true);
 
     try {
+      bool hasError = false;
+
       // Update folder if changed
       if (_selectedFolderId != widget.conversation.folderId) {
         final updated = await api.setConversationFolder(widget.conversation.id, _selectedFolderId);
         if (updated != null) {
           widget.onUpdate(updated);
+        } else {
+          hasError = true;
         }
       }
 
@@ -60,6 +64,8 @@ class _FolderTagSheetState extends State<FolderTagSheet> {
         final updated = await api.addConversationTag(widget.conversation.id, tagId);
         if (updated != null) {
           widget.onUpdate(updated);
+        } else {
+          hasError = true;
         }
       }
 
@@ -67,14 +73,33 @@ class _FolderTagSheetState extends State<FolderTagSheet> {
         final updated = await api.removeConversationTag(widget.conversation.id, tagId);
         if (updated != null) {
           widget.onUpdate(updated);
+        } else {
+          hasError = true;
         }
       }
 
       if (mounted) {
-        Navigator.pop(context);
+        if (hasError) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to save some changes. Please try again.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        } else {
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       debugPrint('Error saving folder/tags: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

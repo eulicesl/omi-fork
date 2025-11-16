@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
@@ -29,4 +29,4 @@ class UpdateFolder(BaseModel):
 
 
 class ReorderFolders(BaseModel):
-    folder_ids: list[str] = Field(description="Ordered list of folder IDs")
+    folder_ids: List[str] = Field(description="Ordered list of folder IDs")

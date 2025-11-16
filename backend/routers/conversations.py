@@ -625,6 +625,14 @@ def set_conversation_folder(
 ):
     """Set or remove the folder for a conversation"""
     _get_valid_conversation_by_id(uid, conversation_id)
+
+    # Validate folder ownership if folder_id is provided
+    if folder_id is not None:
+        import database.folders as folders_db
+        folder = folders_db.get_folder(uid, folder_id)
+        if folder is None:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
     conversations_db.update_conversation(uid, conversation_id, {'folder_id': folder_id})
     updated_conversation = conversations_db.get_conversation(uid, conversation_id)
     return Conversation(**updated_conversation)
@@ -639,6 +647,12 @@ def add_conversation_tag(
     """Add a tag to a conversation"""
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation_obj = Conversation(**conversation)
+
+    # Validate tag ownership
+    import database.tags as tags_db
+    tag = tags_db.get_tag(uid, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="Tag not found")
 
     if tag_id not in conversation_obj.tag_ids:
         tag_ids = conversation_obj.tag_ids + [tag_id]

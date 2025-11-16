@@ -84,12 +84,17 @@ def delete_tag(
         conversations = conversations_db.get_conversations(uid, limit=limit, offset=offset)
         if not conversations:
             break
+        updated_any = False
         for conv in conversations:
             conversation_obj = Conversation(**conv)
             if tag_id in conversation_obj.tag_ids:
                 updated_tags = [tid for tid in conversation_obj.tag_ids if tid != tag_id]
                 conversations_db.update_conversation(uid, conv['id'], {'tag_ids': updated_tags})
-        offset += limit
+                updated_any = True
+        if updated_any:
+            offset = 0  # Reset to check from beginning since we updated items
+        else:
+            offset += limit  # No updates in this batch, move to next batch
 
     tags_db.delete_tag(uid, tag_id)
     return {"message": "Tag deleted successfully"}

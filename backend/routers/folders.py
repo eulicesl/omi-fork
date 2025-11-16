@@ -89,9 +89,9 @@ def delete_folder(
                 conversations_db.update_conversation(uid, conv['id'], {'folder_id': None})
                 updated = True
         if updated:
-            offset = 0
+            offset = 0  # Reset to check from beginning since we updated items
         else:
-            offset += limit
+            offset += limit  # No updates in this batch, move to next batch
 
     folders_db.delete_folder(uid, folder_id)
     return {"message": "Folder deleted successfully"}
