@@ -23,6 +23,10 @@ class ConversationListItem extends StatefulWidget {
   final DateTime date;
   final int conversationIdx;
   final ServerConversation conversation;
+  final bool isSelectionMode;
+  final bool isSelected;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onSelectionToggle;
 
   const ConversationListItem({
     super.key,
@@ -30,6 +34,10 @@ class ConversationListItem extends StatefulWidget {
     required this.date,
     required this.conversationIdx,
     this.isFromOnboarding = false,
+    this.isSelectionMode = false,
+    this.isSelected = false,
+    this.onLongPress,
+    this.onSelectionToggle,
   });
 
   @override
@@ -68,6 +76,32 @@ class _ConversationListItemState extends State<ConversationListItem> {
     return Consumer<ConversationProvider>(builder: (context, provider, child) {
       return GestureDetector(
         onTap: () async {
+          // Handle selection mode tap
+          if (widget.isSelectionMode) {
+            // Prevent selecting locked conversations
+            if (widget.conversation.isLocked) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cannot select locked conversations'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+              return;
+            }
+            // Prevent selecting discarded conversations
+            if (widget.conversation.discarded) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cannot select discarded conversations'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+              return;
+            }
+            widget.onSelectionToggle?.call();
+            return;
+          }
+
           if (widget.conversation.isLocked) {
             MixpanelManager().paywallOpened('Conversation List Item');
             routeToPage(context, const UsagePage(showUpgradeDialog: true));
@@ -111,18 +145,29 @@ class _ConversationListItemState extends State<ConversationListItem> {
             }
           }
         },
+        onLongPress: () {
+          if (!widget.isSelectionMode) {
+            HapticFeedback.mediumImpact();
+            widget.onLongPress?.call();
+          }
+        },
         child: Padding(
           padding:
               EdgeInsets.only(top: 12, left: widget.isFromOnboarding ? 0 : 16, right: widget.isFromOnboarding ? 0 : 16),
-          child: Container(
-            width: double.maxFinite,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1F1F25),
-              borderRadius: BorderRadius.circular(16.0),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16.0),
-              child: Dismissible(
+          child: Stack(
+            children: [
+              Container(
+                width: double.maxFinite,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F1F25),
+                  borderRadius: BorderRadius.circular(16.0),
+                  border: widget.isSelectionMode && widget.isSelected
+                      ? Border.all(color: Colors.deepPurple, width: 2)
+                      : null,
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16.0),
+                  child: Dismissible(
                 key: UniqueKey(),
                 direction: DismissDirection.endToStart,
                 background: Container(
@@ -174,9 +219,36 @@ class _ConversationListItemState extends State<ConversationListItem> {
                       _buildConversationBody(context),
                     ],
                   ),
+                  ),
                 ),
               ),
-            ),
+              ),
+              // Checkbox indicator for selection mode
+              if (widget.isSelectionMode)
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: widget.isSelected ? Colors.deepPurple : Colors.grey.shade800,
+                      border: Border.all(
+                        color: widget.isSelected ? Colors.deepPurple : Colors.grey.shade600,
+                        width: 2,
+                      ),
+                    ),
+                    child: widget.isSelected
+                        ? const Icon(
+                            Icons.check,
+                            color: Colors.white,
+                            size: 18,
+                          )
+                        : null,
+                  ),
+                ),
+            ],
           ),
         ),
       );

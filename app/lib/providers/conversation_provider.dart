@@ -538,6 +538,40 @@ class ConversationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /////////////////////////////////////////////////////////////////
+  ////////// Merge Conversations Functionality ///////////////
+
+  Future<(ServerConversation?, String?)> mergeSelectedConversations(List<String> conversationIds) async {
+    if (conversationIds.length < 2) {
+      return (null, 'At least 2 conversations required');
+    }
+
+    // Call API to merge conversations
+    var (mergedConversation, errorMessage) = await mergeConversations(conversationIds);
+
+    if (mergedConversation != null) {
+      // Remove merged conversations from local lists
+      for (var id in conversationIds) {
+        conversations.removeWhere((element) => element.id == id);
+      }
+
+      // Add the new merged conversation
+      conversations.add(mergedConversation);
+      conversations.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      // Update grouped conversations
+      _groupConversationsByDateWithoutNotify();
+      notifyListeners();
+
+      // Track analytics
+      MixpanelManager().conversationsMerged(conversationIds.length);
+    }
+
+    return (mergedConversation, errorMessage);
+  }
+
+  /////////////////////////////////////////////////////////////////
+
   @override
   void dispose() {
     _processingConversationWatchTimer?.cancel();
