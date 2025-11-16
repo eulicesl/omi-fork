@@ -28,95 +28,8 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
   final AppReviewService _appReviewService = AppReviewService();
   final ScrollController _scrollController = ScrollController();
 
-  // Selection mode for merging conversations
-  bool _isSelectionMode = false;
-  final Set<String> _selectedConversationIds = {};
-
   @override
   bool get wantKeepAlive => true;
-
-  void _enterSelectionMode(String initialConversationId) {
-    setState(() {
-      _isSelectionMode = true;
-      _selectedConversationIds.clear();
-      _selectedConversationIds.add(initialConversationId);
-    });
-  }
-
-  void _exitSelectionMode() {
-    setState(() {
-      _isSelectionMode = false;
-      _selectedConversationIds.clear();
-    });
-  }
-
-  void _toggleConversationSelection(String conversationId) {
-    setState(() {
-      if (_selectedConversationIds.contains(conversationId)) {
-        _selectedConversationIds.remove(conversationId);
-        if (_selectedConversationIds.isEmpty) {
-          _isSelectionMode = false;
-        }
-      } else {
-        _selectedConversationIds.add(conversationId);
-      }
-    });
-  }
-
-  Future<void> _mergeSelectedConversations(ConversationProvider provider) async {
-    if (_selectedConversationIds.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select at least 2 conversations to merge')),
-      );
-      return;
-    }
-
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
-
-    try {
-      var (mergedConversation, errorMessage) = await provider.mergeSelectedConversations(_selectedConversationIds.toList());
-
-      if (!mounted) return;
-      Navigator.of(context).pop(); // Close loading dialog
-
-      if (mergedConversation != null) {
-        final mergedCount = _selectedConversationIds.length;
-        _exitSelectionMode();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Successfully merged $mergedCount conversations'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage ?? 'Failed to merge conversations'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4), // Extended duration for error messages
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop(); // Close loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString()}'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    }
-  }
 
   @override
   void initState() {
@@ -291,32 +204,35 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
                       } else {
                         var date = convoProvider.groupedConversations.keys.elementAt(index);
                         List<ServerConversation> memoriesForDate = convoProvider.groupedConversations[date]!;
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (index == 0) const SizedBox(height: 10),
-                            ConversationsGroupWidget(
-                              isFirst: index == 0,
-                              conversations: memoriesForDate,
-                              date: date,
-                              isSelectionMode: _isSelectionMode,
-                              selectedConversationIds: _selectedConversationIds,
-                              onLongPress: _enterSelectionMode,
-                              onSelectionToggle: _toggleConversationSelection,
-                            ),
-                          ],
-                        );
-                      }
-                    },
-                  ),
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (index == 0) const SizedBox(height: 10),
+                          ConversationsGroupWidget(
+                            isFirst: index == 0,
+                            conversations: memoriesForDate,
+                            date: date,
+                            isSelectionMode: convoProvider.isSelectionMode,
+                            selectedConversationIds: convoProvider.selectedConversationIds,
+                            onLongPress: (id) {
+                              convoProvider.enableSelectionMode();
+                              convoProvider.toggleConversationSelection(id);
+                            },
+                            onSelectionToggle: convoProvider.toggleConversationSelection,
+                          ),
+                        ],
+                      );
+                    }
+                  },
                 ),
-              const SliverToBoxAdapter(
-                child: SizedBox(height: 80),
               ),
-            ],
+          const SliverToBoxAdapter(
+            child: SizedBox(height: 80),
           ),
-        ),
-        bottomNavigationBar: _isSelectionMode
+        ],
+      ),
+    ),
+        bottomNavigationBar: convoProvider.isSelectionMode
             ? Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -333,7 +249,7 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
                   child: Row(
                     children: [
                       Text(
-                        '${_selectedConversationIds.length} selected',
+                        '${convoProvider.selectedConversationIds.length} selected',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -342,19 +258,49 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
                       ),
                       const Spacer(),
                       TextButton(
-                        onPressed: _exitSelectionMode,
+                        onPressed: convoProvider.disableSelectionMode,
                         child: const Text('Cancel'),
                       ),
                       const SizedBox(width: 8),
                       ElevatedButton(
-                        onPressed: _selectedConversationIds.length >= 2
-                            ? () => _mergeSelectedConversations(convoProvider)
+                        onPressed: convoProvider.canMergeSelectedConversations() && !convoProvider.isMerging
+                            ? () async {
+                                final count = convoProvider.selectedConversationIds.length;
+                                final (success, errorMessage) = await convoProvider.mergeSelectedConversations();
+                                if (!mounted) return;
+                                if (success) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('$count conversations merged successfully'),
+                                      backgroundColor: Colors.green,
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(errorMessage ?? 'Failed to merge conversations. Please try again.'),
+                                      backgroundColor: Colors.red,
+                                      duration: const Duration(seconds: 3),
+                                    ),
+                                  );
+                                }
+                              }
                             : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.deepPurple,
                           disabledBackgroundColor: Colors.grey,
                         ),
-                        child: const Text('Merge'),
+                        child: convoProvider.isMerging
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : const Text('Merge'),
                       ),
                     ],
                   ),
