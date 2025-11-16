@@ -140,7 +140,7 @@ def get_conversation_transcripts_by_models(conversation_id: str, uid: str = Depe
 def delete_conversation(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
     print('delete_conversation', conversation_id, uid)
     conversations_db.delete_conversation(uid, conversation_id)
-    delete_vector(conversation_id)
+    delete_vector(uid, conversation_id)
     return {"status": "Ok"}
 
 
