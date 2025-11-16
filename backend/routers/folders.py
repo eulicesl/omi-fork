@@ -83,10 +83,15 @@ def delete_folder(
         conversations = conversations_db.get_conversations(uid, limit=limit, offset=offset)
         if not conversations:
             break
+        updated = False
         for conv in conversations:
             if conv.get('folder_id') == folder_id:
                 conversations_db.update_conversation(uid, conv['id'], {'folder_id': None})
-        offset += limit
+                updated = True
+        if updated:
+            offset = 0
+        else:
+            offset += limit
 
     folders_db.delete_folder(uid, folder_id)
     return {"message": "Folder deleted successfully"}
