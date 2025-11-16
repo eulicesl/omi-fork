@@ -65,6 +65,11 @@ class ConversationProvider extends ChangeNotifier {
   }
 
   Future<void> searchConversations(String query, {bool showShimmer = false}) async {
+    // Exit selection mode when searching to avoid stale selections
+    if (isSelectionMode) {
+      disableSelectionMode();
+    }
+
     if (query.isEmpty) {
       previousQuery = "";
       currentSearchPage = 0;

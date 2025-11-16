@@ -169,20 +169,22 @@ class _ConversationListItemState extends State<ConversationListItem> {
         child: Padding(
           padding:
               EdgeInsets.only(top: 12, left: widget.isFromOnboarding ? 0 : 16, right: widget.isFromOnboarding ? 0 : 16),
-          child: Stack(
-            children: [
-              Container(
-                width: double.maxFinite,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F1F25),
-                  borderRadius: BorderRadius.circular(16.0),
-                  border: widget.isSelectionMode && widget.isSelected
-                      ? Border.all(color: Colors.deepPurple, width: 2)
-                      : null,
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16.0),
-                  child: Dismissible(
+          child: Opacity(
+            opacity: widget.isSelectionMode && (widget.conversation.isLocked || widget.conversation.discarded) ? 0.5 : 1.0,
+            child: Stack(
+              children: [
+                Container(
+                  width: double.maxFinite,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F1F25),
+                    borderRadius: BorderRadius.circular(16.0),
+                    border: widget.isSelectionMode && widget.isSelected
+                        ? Border.all(color: Colors.deepPurple, width: 2)
+                        : null,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16.0),
+                    child: Dismissible(
                     key: UniqueKey(),
                     direction: widget.isSelectionMode ? DismissDirection.none : DismissDirection.endToStart,
                     background: Container(
