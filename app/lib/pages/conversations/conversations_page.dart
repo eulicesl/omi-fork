@@ -87,10 +87,11 @@ class _ConversationsPageState extends State<ConversationsPage> with AutomaticKee
       Navigator.of(context).pop(); // Close loading dialog
 
       if (mergedConversation != null) {
+        final mergedCount = _selectedConversationIds.length;
         _exitSelectionMode();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Successfully merged ${_selectedConversationIds.length} conversations'),
+            content: Text('Successfully merged $mergedCount conversations'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
