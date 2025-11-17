@@ -749,14 +749,26 @@ def merge_conversations(uid: str, conversation_ids: List[str]) -> Tuple[Optional
     first_conv = conversations[0]
     last_conv = conversations[-1]
 
-    # Get all conversations between first and last
-    all_convs_in_range = get_conversations(
-        uid=uid,
-        start_date=first_conv['created_at'],
-        end_date=last_conv['created_at'],
-        include_discarded=False,
-        limit=1000
-    )
+    # Get all conversations between first and last using pagination
+    all_convs_in_range = []
+    batch_size = 1000
+    last_created_at = first_conv['created_at']
+    while True:
+        batch = get_conversations(
+            uid=uid,
+            start_date=last_created_at,
+            end_date=last_conv['created_at'],
+            include_discarded=False,
+            limit=batch_size
+        )
+        # Remove the first conversation if it's the same as last_created_at (to avoid duplicates)
+        if all_convs_in_range:
+            batch = [c for c in batch if c['created_at'] > last_created_at]
+        all_convs_in_range.extend(batch)
+        if len(batch) < batch_size:
+            break
+        # Prepare for next batch
+        last_created_at = batch[-1]['created_at']
 
     # Sort by created_at
     all_convs_in_range.sort(key=lambda c: c['created_at'])
