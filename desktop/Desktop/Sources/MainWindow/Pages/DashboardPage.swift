@@ -250,10 +250,10 @@ struct DashboardPage: View {
             )
 
             ChatInputView(
-                onSend: { text in
+                onSend: { text, imageData in
                     AnalyticsManager.shared.chatMessageSent(
                         messageLength: text.count, hasContext: selectedApp != nil, source: "dashboard_chat")
-                    Task { await chatProvider.sendMessage(text) }
+                    Task { await chatProvider.sendMessage(text, imageData: imageData) }
                 },
                 onFollowUp: { text in
                     Task { await chatProvider.sendFollowUp(text) }

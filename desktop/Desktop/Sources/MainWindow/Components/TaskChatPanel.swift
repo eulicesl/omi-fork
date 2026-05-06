@@ -78,7 +78,8 @@ struct TaskChatPanel: View {
 
                         // Input area
                         ChatInputView(
-                            onSend: { text in
+                            onSend: { text, _ in
+                                // Task chat doesn't take attachments today — drop the image data.
                                 AnalyticsManager.shared.chatMessageSent(messageLength: text.count, source: "task_chat")
                                 Task {
                                     // On the first message, include full task details so the AI

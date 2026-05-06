@@ -367,8 +367,13 @@ struct ChatMessage: Identifiable {
     var notificationContext: String?
     /// Screenshot JPEG data captured when a proactive notification was generated
     var notificationScreenshot: Data?
+    /// User-attached image (drag-drop / paste / picker) — rendered inline in the
+    /// user-side ChatBubble. Stored locally as raw bytes for instant preview;
+    /// backend round-trip thumbnail URLs are not used for the local sender's own
+    /// message. Cross-device viewers fall back to ChatFile.thumbnail via files_id.
+    var attachmentImageData: Data?
 
-    init(id: String = UUID().uuidString, text: String, createdAt: Date = Date(), sender: ChatSender, isStreaming: Bool = false, rating: Int? = nil, isSynced: Bool = false, citations: [Citation] = [], contentBlocks: [ChatContentBlock] = [], metadata: MessageMetadata? = nil, notificationContext: String? = nil, notificationScreenshot: Data? = nil) {
+    init(id: String = UUID().uuidString, text: String, createdAt: Date = Date(), sender: ChatSender, isStreaming: Bool = false, rating: Int? = nil, isSynced: Bool = false, citations: [Citation] = [], contentBlocks: [ChatContentBlock] = [], metadata: MessageMetadata? = nil, notificationContext: String? = nil, notificationScreenshot: Data? = nil, attachmentImageData: Data? = nil) {
         self.id = id
         self.text = text
         self.createdAt = createdAt
@@ -381,6 +386,7 @@ struct ChatMessage: Identifiable {
         self.metadata = metadata
         self.notificationContext = notificationContext
         self.notificationScreenshot = notificationScreenshot
+        self.attachmentImageData = attachmentImageData
     }
 }
 
@@ -2354,14 +2360,41 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         let isFirstMessage = messages.isEmpty
         let capturedSessionId = sessionId
         let capturedAppId = overrideAppId ?? selectedAppId
+        // User-attached image (single-image MVP). Held locally for the bubble
+        // preview; uploaded to /v2/files in the persistence Task below so other
+        // devices can render it from chat history. The local agent already
+        // receives the image bytes via AgentBridge.query(... imageBase64:),
+        // so the LLM call doesn't depend on the backend round-trip.
+        let userAttachment = imageData
         if !isFollowUp {
             Task { [weak self] in
                 do {
+                    var fileIds: [String]? = nil
+                    if let attachment = userAttachment {
+                        // Best-effort upload — failures shouldn't block the chat
+                        // since the LLM call already has the image via the local
+                        // agent. We just lose cross-device chat-history rendering.
+                        do {
+                            let payload = UploadFilePayload(
+                                filename: "image.png",
+                                mimeType: "image/png",
+                                data: attachment
+                            )
+                            let uploaded = try await APIClient.shared.uploadChatFiles([payload])
+                            let ids = uploaded.map { $0.id }
+                            if !ids.isEmpty {
+                                fileIds = ids
+                            }
+                        } catch {
+                            logError("Failed to upload chat attachment", error: error)
+                        }
+                    }
                     let response = try await APIClient.shared.saveMessage(
                         text: trimmedText,
                         sender: "human",
                         appId: capturedAppId,
-                        sessionId: capturedSessionId
+                        sessionId: capturedSessionId,
+                        fileIds: fileIds
                     )
                     // Adopt the server ID (local UUID → server ID) and mark synced.
                     // isSynced=true enables rating buttons on the message bubble.
@@ -2381,7 +2414,8 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             let userMessage = ChatMessage(
                 id: userMessageId,
                 text: trimmedText,
-                sender: .user
+                sender: .user,
+                attachmentImageData: userAttachment
             )
             messages.append(userMessage)
 

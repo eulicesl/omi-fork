@@ -9,7 +9,7 @@ import SwiftUI
 ///   - If input is empty, the button becomes a stop button
 ///   - If input has text, pressing send calls `onFollowUp` (redirects the agent)
 struct ChatInputView: View {
-    let onSend: (String) -> Void
+    let onSend: (String, Data?) -> Void
     var onFollowUp: ((String) -> Void)? = nil
     var onStop: (() -> Void)? = nil
     let isSending: Bool
@@ -23,8 +23,19 @@ struct ChatInputView: View {
     @Environment(\.fontScale) private var fontScale
     @Binding var inputText: String
 
+    /// Single-image attachment captured from a drag-drop. Stored as raw bytes
+    /// for the chip preview and the send payload. Phase 1 MVP — multi-attachment
+    /// and non-image types are follow-on phases.
+    @State private var pendingAttachment: Data?
+    @State private var isDropTargeted = false
+
     private var hasText: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Send is enabled when either text is present or an image is attached.
+    private var hasSendableContent: Bool {
+        hasText || pendingAttachment != nil
     }
 
     /// Padding used for both the NSTextView (via textContainerInset) and the
@@ -33,6 +44,51 @@ struct ChatInputView: View {
     private let inputPaddingV: CGFloat = 12
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let attachment = pendingAttachment {
+                attachmentChip(for: attachment)
+            }
+            inputRow
+        }
+        .padding(12)
+        .omiPanel(fill: OmiColors.backgroundSecondary, radius: 22, stroke: OmiColors.border.opacity(0.2), shadowOpacity: 0.1, shadowRadius: 12, shadowY: 6)
+        .overlay {
+            // Drop zone visual feedback — highlights the panel border while a
+            // drag is hovering over the composer.
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(OmiColors.purplePrimary, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .onAppear {
+            // When ask mode is disabled, ensure we're always in act mode
+            if !askModeEnabled {
+                mode = .act
+            }
+            if let pending = pendingText?.wrappedValue, !pending.isEmpty {
+                inputText = pending
+                pendingText?.wrappedValue = ""
+            }
+        }
+        .onChange(of: pendingText?.wrappedValue ?? "") { _, newValue in
+            if !newValue.isEmpty {
+                inputText = newValue
+                pendingText?.wrappedValue = ""
+            }
+        }
+        .onChange(of: askModeEnabled) { _, enabled in
+            if !enabled {
+                mode = .act
+            }
+        }
+    }
+
+    private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
             // Input field with floating toggle
             ZStack(alignment: .topTrailing) {
@@ -100,46 +156,120 @@ struct ChatInputView: View {
                 Button(action: handleSubmit) {
                     Image(systemName: "arrow.up.circle.fill")
                         .scaledFont(size: 24)
-                        .foregroundColor(hasText ? OmiColors.purplePrimary : OmiColors.textQuaternary)
+                        .foregroundColor(hasSendableContent ? OmiColors.purplePrimary : OmiColors.textQuaternary)
                 }
                 .buttonStyle(.plain)
-                .disabled(!hasText)
-            }
-        }
-        .padding(12)
-        .omiPanel(fill: OmiColors.backgroundSecondary, radius: 22, stroke: OmiColors.border.opacity(0.2), shadowOpacity: 0.1, shadowRadius: 12, shadowY: 6)
-        .fixedSize(horizontal: false, vertical: true)
-        .onAppear {
-            // When ask mode is disabled, ensure we're always in act mode
-            if !askModeEnabled {
-                mode = .act
-            }
-            if let pending = pendingText?.wrappedValue, !pending.isEmpty {
-                inputText = pending
-                pendingText?.wrappedValue = ""
-            }
-        }
-        .onChange(of: pendingText?.wrappedValue ?? "") { _, newValue in
-            if !newValue.isEmpty {
-                inputText = newValue
-                pendingText?.wrappedValue = ""
-            }
-        }
-        .onChange(of: askModeEnabled) { _, enabled in
-            if !enabled {
-                mode = .act
+                .disabled(!hasSendableContent)
             }
         }
     }
 
+    /// Inline preview chip for the pending image attachment. Tap × to remove
+    /// before sending. Single-image only in Phase 1.
+    private func attachmentChip(for data: Data) -> some View {
+        let thumb = NSImage(data: data)
+        return ZStack(alignment: .topTrailing) {
+            Group {
+                if let thumb = thumb {
+                    Image(nsImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 60, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OmiColors.backgroundTertiary)
+                        .frame(width: 60, height: 60)
+                        .overlay(
+                            Image(systemName: "doc")
+                                .scaledFont(size: 18)
+                                .foregroundColor(OmiColors.textTertiary)
+                        )
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(OmiColors.border.opacity(0.3), lineWidth: 1)
+            )
+
+            Button(action: { pendingAttachment = nil }) {
+                Image(systemName: "xmark.circle.fill")
+                    .scaledFont(size: 16)
+                    .foregroundColor(.white)
+                    .background(
+                        Circle()
+                            .fill(Color.black.opacity(0.65))
+                            .frame(width: 14, height: 14)
+                    )
+            }
+            .buttonStyle(.plain)
+            .offset(x: 6, y: -6)
+        }
+        .padding(.leading, 4)
+        .padding(.top, 4)
+    }
+
+    /// Accept image-typed file URLs from a drag-drop. Two paths in order of
+    /// likelihood for a sandboxed macOS app:
+    ///   1. `loadFileRepresentation` — AppKit stages a security-scoped temp
+    ///      file we can read without bookmarks. Right path for Finder drops.
+    ///   2. `loadDataRepresentation` — for in-memory images from web pages,
+    ///      screenshot tools, etc. that ship raw bytes directly.
+    /// Bare `loadObject(ofClass: URL.self)` was tried first and fails silently
+    /// in sandboxed builds because `Data(contentsOf:)` on the returned URL
+    /// needs security scope the URL provider does not auto-grant.
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+
+        if provider.hasItemConformingToTypeIdentifier("public.image") {
+            provider.loadFileRepresentation(forTypeIdentifier: "public.image") { url, error in
+                if let error = error {
+                    logError("ChatInput: loadFileRepresentation failed", error: error)
+                    return
+                }
+                guard let url = url, let data = try? Data(contentsOf: url) else { return }
+                DispatchQueue.main.async {
+                    self.pendingAttachment = data
+                }
+            }
+            return true
+        }
+
+        if provider.hasItemConformingToTypeIdentifier("public.png")
+            || provider.hasItemConformingToTypeIdentifier("public.jpeg")
+            || provider.hasItemConformingToTypeIdentifier("public.tiff") {
+            let typeId = provider.registeredTypeIdentifiers.first(where: {
+                ["public.png", "public.jpeg", "public.tiff", "public.image"].contains($0)
+            }) ?? "public.image"
+            provider.loadDataRepresentation(forTypeIdentifier: typeId) { data, error in
+                if let error = error {
+                    logError("ChatInput: loadDataRepresentation failed", error: error)
+                    return
+                }
+                guard let data = data, NSImage(data: data) != nil else { return }
+                DispatchQueue.main.async {
+                    self.pendingAttachment = data
+                }
+            }
+            return true
+        }
+
+        return false
+    }
+
     private func handleSubmit() {
-        guard hasText else { return }
+        guard hasSendableContent else { return }
         let text = inputText
+        let attachment = pendingAttachment
         inputText = ""
+        pendingAttachment = nil
         if isSending {
+            // Follow-ups don't carry attachments today — Phase 1 keeps the
+            // attachment path on the primary send only. (The agent receives the
+            // image with the original send and remembers it across the turn.)
             onFollowUp?(text)
         } else {
-            onSend(text)
+            onSend(text, attachment)
         }
     }
 }

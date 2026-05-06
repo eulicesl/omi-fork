@@ -4018,7 +4018,8 @@ extension APIClient {
     sender: String,
     appId: String? = nil,
     sessionId: String? = nil,
-    metadata: String? = nil
+    metadata: String? = nil,
+    fileIds: [String]? = nil
   ) async throws -> SaveMessageResponse {
     struct SaveRequest: Encodable {
       let text: String
@@ -4026,10 +4027,42 @@ extension APIClient {
       let app_id: String?
       let session_id: String?
       let metadata: String?
+      let file_ids: [String]?
     }
     let body = SaveRequest(
-      text: text, sender: sender, app_id: appId, session_id: sessionId, metadata: metadata)
+      text: text, sender: sender, app_id: appId, session_id: sessionId, metadata: metadata,
+      file_ids: fileIds)
     return try await post("v2/desktop/messages", body: body)
+  }
+
+  /// Upload one or more files to /v2/files via multipart form-data. The
+  /// returned ids are passed through `saveMessage(... fileIds:)` so the
+  /// message references the uploaded attachments. Mirrors the mobile app's
+  /// upload contract (multipart field name `files`).
+  func uploadChatFiles(_ files: [UploadFilePayload]) async throws -> [ChatFileResponse] {
+    let url = URL(string: baseURL + "v2/files")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.allHTTPHeaderFields = try await buildHeaders(requireAuth: true)
+
+    let boundary = "Boundary-\(UUID().uuidString)"
+    request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+    var body = Data()
+    let lineBreak = "\r\n"
+    for file in files {
+      body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+      body.append(
+        "Content-Disposition: form-data; name=\"files\"; filename=\"\(file.filename)\"\(lineBreak)"
+          .data(using: .utf8)!)
+      body.append("Content-Type: \(file.mimeType)\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+      body.append(file.data)
+      body.append(lineBreak.data(using: .utf8)!)
+    }
+    body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+    request.httpBody = body
+
+    return try await performRequest(request)
   }
 
   /// Fetch chat message history
@@ -4263,6 +4296,27 @@ struct SaveMessageResponse: Codable {
   enum CodingKeys: String, CodingKey {
     case id
     case createdAt = "created_at"
+  }
+}
+
+/// In-memory payload for a single multipart file upload to /v2/files.
+struct UploadFilePayload {
+  let filename: String
+  let mimeType: String
+  let data: Data
+}
+
+/// Response item from POST /v2/files. Mirrors backend's FileChat model for
+/// the fields the desktop currently uses.
+struct ChatFileResponse: Codable {
+  let id: String
+  let name: String?
+  let mimeType: String?
+  let thumbnail: String?
+
+  enum CodingKeys: String, CodingKey {
+    case id, name, thumbnail
+    case mimeType = "mime_type"
   }
 }
 

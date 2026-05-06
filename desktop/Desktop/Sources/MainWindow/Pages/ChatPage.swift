@@ -525,10 +525,10 @@ struct ChatPage: View {
 
   private var inputArea: some View {
     ChatInputView(
-      onSend: { text in
+      onSend: { text, imageData in
         AnalyticsManager.shared.chatMessageSent(
           messageLength: text.count, hasContext: selectedApp != nil, source: "main_chat")
-        Task { await chatProvider.sendMessage(text) }
+        Task { await chatProvider.sendMessage(text, imageData: imageData) }
       },
       onFollowUp: { text in
         Task { await chatProvider.sendFollowUp(text) }
@@ -731,6 +731,24 @@ struct ChatBubble: View {
         } else {
           // User messages or AI messages without content blocks (loaded from Firestore)
           VStack(alignment: message.sender == .user ? .trailing : .leading, spacing: 4) {
+            // User-attached image (rendered above the text bubble, like
+            // ChatGPT/Claude desktop). Sourced from the local Data captured at
+            // send-time; cross-device viewers will eventually fetch the
+            // backend thumbnail via files_id (out of scope for Phase 1).
+            if message.sender == .user,
+               let attachmentData = message.attachmentImageData,
+               let nsImage = NSImage(data: attachmentData) {
+              Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 220, maxHeight: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                  RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(OmiColors.border.opacity(0.2), lineWidth: 1)
+                )
+            }
+
             SelectableMarkdown(text: displayText, sender: message.sender)
               .padding(.horizontal, 14)
               .padding(.vertical, 10)
