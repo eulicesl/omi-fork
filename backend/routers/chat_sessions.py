@@ -44,6 +44,11 @@ class SaveMessageRequest(BaseModel):
     app_id: str | None = Field(None, max_length=200)
     session_id: str | None = Field(None, max_length=200)
     metadata: str | None = None
+    # Optional file attachments (uploaded separately via POST /v2/files).
+    # Persisted on the message so other devices can render the attachment in
+    # chat history. Desktop's LLM call uses imageBase64 over the local agent
+    # bridge; this field is purely for cross-device persistence.
+    file_ids: list[str] | None = None
 
 
 class RateMessageRequest(BaseModel):
@@ -141,6 +146,7 @@ def save_message(
         app_id=request.app_id,
         session_id=request.session_id,
         metadata=request.metadata,
+        file_ids=request.file_ids,
     )
 
 

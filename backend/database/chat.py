@@ -675,12 +675,24 @@ def update_chat_session(uid: str, session_id: str, title: str = None, starred: b
 
 
 def save_message(
-    uid: str, text: str, sender: str, app_id: str = None, session_id: str = None, metadata: str = None
+    uid: str,
+    text: str,
+    sender: str,
+    app_id: str = None,
+    session_id: str = None,
+    metadata: str = None,
+    file_ids: List[str] = None,
 ) -> dict:
     """Save a chat message for the desktop app.
 
     Writes all fields expected by chat.py's Message model so messages are
     visible across platforms.  Auto-acquires a session if none provided.
+
+    `file_ids` is the list of attachment IDs previously uploaded via
+    POST /v2/files. The IDs and their resolved metadata are written to the
+    message document so other devices can render attachments in chat history.
+    The session also accumulates the file IDs (idempotent via ArrayUnion) so
+    session-level queries see the full attachment history.
     """
     msg_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -688,6 +700,18 @@ def save_message(
     # Auto-acquire session (matches Rust backend behavior)
     if not session_id:
         session_id = acquire_chat_session(uid, app_id=app_id)
+
+    files_id_field: List[str] = []
+    files_field: List[dict] = []
+    if file_ids and session_id:
+        # Resolve metadata for each id; persist on the message so other devices
+        # can render the chip without a second round-trip.
+        resolved = get_chat_files(uid, file_ids)
+        files_field = [f for f in resolved if f]
+        files_id_field = [f.get('id') for f in files_field if f.get('id')]
+        # Mirror the session's running file_ids list (ArrayUnion is idempotent).
+        if files_id_field:
+            add_files_to_chat_session(uid, session_id, files_id_field)
 
     doc = {
         'id': msg_id,
@@ -704,6 +728,8 @@ def save_message(
         'reported': False,
         'memories_id': [],
         'metadata': metadata,
+        'files_id': files_id_field,
+        'files': files_field,
     }
     db.collection('users').document(uid).collection('messages').document(msg_id).set(doc)
 
