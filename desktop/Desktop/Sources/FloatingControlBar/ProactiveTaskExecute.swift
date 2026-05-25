@@ -150,6 +150,30 @@ enum ProactiveTaskExecute {
             .firstMatch(in: intentText, range: fullRange)
         guard appMatch != nil || urlMatch != nil else { return nil }
 
+        // Multi-step guard. If the user's imperative chains more work after
+        // the open phrase — e.g. "Open Chrome and send Daniel the summary"
+        // or "Launch Safari then check email" — defer to the agent path so
+        // that downstream work isn't silently dropped. We check only the
+        // text *after* the matched open phrase so coordinating conjunctions
+        // inside the matched URL (e.g. ".../path/and/more") don't false-trip.
+        // Conservative-by-design: a false positive (deferring something we
+        // could have fast-pathed) just costs an LLM round trip; a false
+        // negative drops user-requested work.
+        let matchEndUTF16: Int = {
+            if let m = appMatch { return NSMaxRange(m.range) }
+            if let m = urlMatch { return NSMaxRange(m.range) }
+            return (intentText as NSString).length
+        }()
+        let afterText = (intentText as NSString)
+            .substring(from: matchEndUTF16)
+        let multiStepPattern = #"\b(and|then|also)\b\s+\S"#
+        if afterText.range(
+            of: multiStepPattern,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return nil
+        }
+
         // Browser inference, two-source rule. We only set `browserName`
         // when the user *explicitly* named a browser; otherwise we let
         // open(1) fall back to the system default. Two signals count:
@@ -188,8 +212,22 @@ enum ProactiveTaskExecute {
         // (if also present) just picks the browser via `browserName`.
         // URL is captured from the original intent text (not lowercased),
         // so case-sensitive paths and signed tokens survive intact.
+        //
+        // The `\S+` capture greedily includes terminal punctuation when a
+        // URL ends a sentence ("Open https://react.dev/learn."). Strip a
+        // small set of common closing characters off the tail before
+        // building the URL so we don't request the wrong path.
         if let urlMatch, let urlRange = Range(urlMatch.range(at: 1), in: intentText) {
-            if let url = URL(string: String(intentText[urlRange])) {
+            var urlString = String(intentText[urlRange])
+            let trailingPunctuation: Set<Character> = [
+                ".", ",", ";", "!", "?", ":",
+                ")", "]", "}",
+                "\"", "'",
+            ]
+            while let last = urlString.last, trailingPunctuation.contains(last) {
+                urlString.removeLast()
+            }
+            if let url = URL(string: urlString) {
                 return .openURL(url: url, browserName: browserName)
             }
         }

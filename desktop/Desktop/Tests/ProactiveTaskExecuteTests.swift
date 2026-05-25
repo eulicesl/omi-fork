@@ -328,6 +328,135 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Multi-step deferral (Codex P1, fix v4)
+
+    /// Review feedback (Codex P1): the prior detector matched any
+    /// `open <target>` even when the user chained additional work
+    /// ("Open Chrome **and send Daniel the summary**"). Firing the fast
+    /// path on such an intent silently drops the send step — the LLM is
+    /// never invoked. Multi-step intents must defer.
+    func testDirectDesktopActionDefersOnAndConjunction() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome and send Daniel the standup summary"
+            ),
+            "multi-step task must defer so the 'send Daniel' step isn't silently dropped"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnThenConjunction() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Launch Safari then check email"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnTwoOpenTargets() {
+        // Two opens is still multi-step — the fast path can only deliver
+        // one open. Defer so the agent can pick.
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome and Safari"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnAlsoFollowup() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Finder. Also reply to Sarah."
+            )
+        )
+    }
+
+    func testDirectDesktopActionStillFastPathsPoliteSuffix() {
+        // "please" / "for me" / trailing politeness are not multi-step
+        // signals. Fast-path should still fire.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome please"
+            ),
+            .openApplication(name: "Google Chrome")
+        )
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome for me"
+            ),
+            .openApplication(name: "Google Chrome")
+        )
+    }
+
+    func testDirectDesktopActionConjunctionInsideUrlDoesNotDefer() {
+        // The multi-step check runs only against text *after* the matched
+        // open phrase. A URL whose path happens to contain "and"
+        // (/this-and-that) must not trigger the multi-step deferral.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open https://example.com/this-and-that"
+            ),
+            .openURL(
+                url: URL(string: "https://example.com/this-and-that")!,
+                browserName: nil
+            )
+        )
+    }
+
+    // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
+
+    /// Review feedback (Codex P2): `\S+` greedily includes terminal
+    /// punctuation when a URL ends a sentence. Without the strip the
+    /// fast path opens the wrong path or fails outright.
+    func testDirectDesktopActionStripsTrailingPeriodFromUrl() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open the docs",
+                message: "Open https://react.dev/learn."
+            ),
+            .openURL(url: URL(string: "https://react.dev/learn")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionStripsTrailingCloseParen() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open it",
+                message: "Open https://example.com)"
+            ),
+            .openURL(url: URL(string: "https://example.com")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionStripsMultipleTrailingPunctuationMarks() {
+        // Sentence-ending punctuation can compound. Strip all of them.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open https://example.com/path?!"
+            ),
+            .openURL(url: URL(string: "https://example.com/path")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionDoesNotStripValidUrlPathCharacters() {
+        // A trailing slash is part of the URL, not punctuation — must
+        // NOT be stripped.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open https://example.com/"
+            ),
+            .openURL(url: URL(string: "https://example.com/")!, browserName: nil)
+        )
+    }
+
     func testCompletionActivityTextDoesNotTruncateFinalMessage() {
         let long = String(repeating: "Final task result with enough detail. ", count: 8)
         XCTAssertEqual(
