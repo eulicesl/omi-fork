@@ -705,15 +705,15 @@ struct ChatBubble: View {
             }
           }
           // Show typing indicator at end if still streaming
-          // (skip only when last group is tool calls with a running tool — it already has a spinner)
+          // (skip only when last group is tool calls with an in-flight tool — it already has a spinner)
           if message.isStreaming {
             if case .toolCalls(_, let calls) = cachedGroupedBlocks.last,
               calls.contains(where: { block in
-                if case .toolCall(_, _, .running, _, _, _) = block { return true }
+                if case .toolCall(_, _, let status, _, _, _) = block { return status.isInFlight }
                 return false
               })
             {
-              // Tool group has a running tool — its card already shows a spinner
+              // Tool group has an in-flight tool — its card already shows a spinner
             } else {
               TypingIndicator()
             }
@@ -1059,19 +1059,21 @@ struct ToolCallsGroup: View {
 
   @State private var isExpanded = false
 
-  /// Whether any tool in the group is still running
-  private var hasRunningTool: Bool {
+  /// Whether any tool in the group is still in flight (running, slow, or stalled).
+  /// Renamed from `hasRunningTool` so the intent matches the broader set
+  /// of in-flight states `StallDetector` can promote to.
+  private var hasInFlightTool: Bool {
     calls.contains { block in
-      if case .toolCall(_, _, .running, _, _, _) = block { return true }
+      if case .toolCall(_, _, let status, _, _, _) = block { return status.isInFlight }
       return false
     }
   }
 
-  /// Display name of the currently running tool (last running one), or last tool if all done
+  /// Display name of the currently in-flight tool (last in-flight one), or last tool if all done
   private var currentToolName: String {
-    // Find the last running tool
+    // Find the last in-flight tool
     if let lastRunning = calls.last(where: { block in
-      if case .toolCall(_, _, .running, _, _, _) = block { return true }
+      if case .toolCall(_, _, let status, _, _, _) = block { return status.isInFlight }
       return false
     }) {
       if case .toolCall(_, let name, _, _, _, _) = lastRunning {
@@ -1095,7 +1097,7 @@ struct ToolCallsGroup: View {
       }) {
         HStack(spacing: 6) {
           // Status indicator
-          if hasRunningTool {
+          if hasInFlightTool {
             ProgressView()
               .controlSize(.mini)
               .frame(width: 12, height: 12)

@@ -193,7 +193,29 @@ enum ChatContentBlock: Identifiable {
 
 enum ToolCallStatus {
     case running
+    /// Promoted by `StallDetector` after the per-tool / inter-event
+    /// timer crosses `StallThresholds.slowGapMs`. Still in flight —
+    /// UI swaps the spinner for a "still working" annotation.
+    case slow
+    /// Promoted past `StallThresholds.stalledGapMs`. Still in flight,
+    /// but the message-level Cancel banner appears.
+    case stalled
     case completed
+    /// Terminal failure (timeout, interrupt, bridge error). Visually
+    /// distinct from `.completed` so the user can tell something went
+    /// wrong without reading the message.
+    case failed
+
+    /// True for any state where the tool is still working. Pattern
+    /// matches that previously asked "is `.running`?" should ask
+    /// `isInFlight` so detector-promoted `.slow` / `.stalled` are
+    /// also treated as in-flight.
+    var isInFlight: Bool {
+        switch self {
+        case .running, .slow, .stalled: return true
+        case .completed, .failed: return false
+        }
+    }
 }
 
 // MARK: - Chat Message Model
@@ -3121,12 +3143,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
 
         let toolInput = input.flatMap { ChatContentBlock.toolInputSummary(for: toolName, input: $0) }
 
+        // Bridge callbacks only ever pass .running (started) or
+        // .completed (finished). Detector-promoted .slow / .stalled
+        // arrive through the Commit D status-update path, not here.
         if status == .running {
-            // If we have a toolUseId and input, try to update an existing running block (input arrived after start)
+            // If we have a toolUseId and input, try to update an existing in-flight block (input arrived after start)
             if let toolUseId = toolUseId, toolInput != nil {
                 for i in stride(from: messages[index].contentBlocks.count - 1, through: 0, by: -1) {
                     if case .toolCall(let id, let name, let st, let existingTuid, _, let output) = messages[index].contentBlocks[i],
-                       (existingTuid == toolUseId || (existingTuid == nil && name == toolName && st == .running)) {
+                       (existingTuid == toolUseId || (existingTuid == nil && name == toolName && st.isInFlight)) {
                         messages[index].contentBlocks[i] = .toolCall(
                             id: id, name: name, status: st,
                             toolUseId: toolUseId, input: toolInput, output: output
@@ -3141,9 +3166,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                           toolUseId: toolUseId, input: toolInput)
             )
         } else {
-            // Mark as completed — find by toolUseId first, fall back to name
+            // Mark as completed — find by toolUseId first, fall back to name.
+            // Match any in-flight state so detector-promoted .slow / .stalled
+            // also resolve cleanly when the tool actually finishes.
             for i in stride(from: messages[index].contentBlocks.count - 1, through: 0, by: -1) {
-                if case .toolCall(let id, let name, .running, let existingTuid, let existingInput, let output) = messages[index].contentBlocks[i] {
+                if case .toolCall(let id, let name, let st, let existingTuid, let existingInput, let output) = messages[index].contentBlocks[i],
+                   st.isInFlight {
                     let matches = (toolUseId != nil && existingTuid == toolUseId) || (toolUseId == nil && name == toolName)
                     if matches {
                         messages[index].contentBlocks[i] = .toolCall(
@@ -3190,12 +3218,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         }
     }
 
-    /// Mark any remaining `.running` tool call blocks as `.completed` in a message.
+    /// Mark any remaining in-flight tool call blocks as `.completed` in a message.
     /// Called when a query finishes (success or interrupt) so spinners don't spin forever.
+    /// Matches `.running`, `.slow`, and `.stalled` (any state where `isInFlight` is true)
+    /// so detector-promoted blocks resolve when the turn ends.
     private func completeRemainingToolCalls(messageId: String) {
         guard let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
         for i in messages[index].contentBlocks.indices {
-            if case .toolCall(let id, let name, .running, let toolUseId, let input, let output) = messages[index].contentBlocks[i] {
+            if case .toolCall(let id, let name, let status, let toolUseId, let input, let output) = messages[index].contentBlocks[i],
+               status.isInFlight {
                 messages[index].contentBlocks[i] = .toolCall(
                     id: id, name: name, status: .completed,
                     toolUseId: toolUseId, input: input, output: output
