@@ -80,6 +80,104 @@ final class ExecuteVerificationGateTests: XCTestCase {
         XCTAssertEqual(ExecuteVerificationGate.classify(query: "   \n  "), .research)
     }
 
+    // MARK: - Production-shape preambles (TaskPromotionService title="Task")
+
+    /// Regression guard for the bug surfaced by the May 24 baseline eval:
+    /// every proactive task notification ships with `title: "Task"` (literal)
+    /// from TaskPromotionService, so classifying on the Title line alone made
+    /// classify() return `.research` for every actionable production
+    /// notification. The gate / retry loop / verification turn (P2/P3/P8)
+    /// silently bypassed every real Execute click. Classify must now also
+    /// read the Details line, with the production `"New task: "` prefix
+    /// stripped.
+    func testClassifyUsesDetailsWhenTitleIsLiteralTaskPlaceholder() {
+        let prompted = """
+        # EXECUTE
+        Execute this task end-to-end now.
+
+        Task: Task
+        Details: New task: Send Daniel the standup summary
+        """
+        XCTAssertEqual(
+            ExecuteVerificationGate.classify(query: prompted),
+            .actionable,
+            "Production proactive-task notifications use title='Task' literal — classify must fall through to Details"
+        )
+    }
+
+    func testClassifyUsesDetailsForProductionCreateTask() {
+        // Mirrors the eval's create_file task shape (title="Task",
+        // message="Create /tmp/..."). Pre-fix this returned .research and
+        // the gate never fired against any of the 10 create_file rows.
+        let prompted = """
+        # EXECUTE
+        Execute this task end-to-end now.
+
+        Task: Task
+        Details: Create /tmp/omi-execute-eval/alpha.txt with exact text EXECUTE_ALPHA_OK
+        """
+        XCTAssertEqual(
+            ExecuteVerificationGate.classify(query: prompted),
+            .actionable
+        )
+    }
+
+    func testClassifyStripsNewTaskPrefixCaseInsensitively() {
+        // The literal prefix is "New task: " but be tolerant to capitalization
+        // drift — TaskPromotionService is the only producer today, but the
+        // strip rule shouldn't break if a future caller uses "NEW TASK:".
+        for prefix in ["New task: ", "NEW TASK: ", "new task:  "] {
+            let prompted = """
+            # EXECUTE
+            Execute this task end-to-end now.
+
+            Task: Task
+            Details: \(prefix)Reply to Jess about the launch
+            """
+            XCTAssertEqual(
+                ExecuteVerificationGate.classify(query: prompted),
+                .actionable,
+                "prefix '\(prefix)' must be stripped before classification"
+            )
+        }
+    }
+
+    func testClassifyStaysResearchWhenBothLinesAreResearch() {
+        // Production title is generic and Details is a research-y phrasing —
+        // gate should stay out of the way (no false-positive "actionable").
+        let prompted = """
+        # EXECUTE
+        Execute this task end-to-end now.
+
+        Task: Task
+        Details: New task: Look up Daniel's email
+        """
+        XCTAssertEqual(
+            ExecuteVerificationGate.classify(query: prompted),
+            .research
+        )
+    }
+
+    /// Actionable-wins semantics: when the Title line is research-y but the
+    /// Details line carries the imperative, classify as actionable. This is
+    /// the design choice that makes production work — see
+    /// `testClassifyUsesDetailsWhenTitleIsLiteralTaskPlaceholder`. Pinning
+    /// it as a separate test so a future reviewer who wants "Title wins"
+    /// has to consciously delete this case.
+    func testClassifyPrefersActionableDetailsOverResearchTitle() {
+        let prompted = """
+        # EXECUTE
+        Execute this task end-to-end now.
+
+        Task: Summarize the design doc
+        Details: Send the summary to the channel when you're done.
+        """
+        XCTAssertEqual(
+            ExecuteVerificationGate.classify(query: prompted),
+            .actionable
+        )
+    }
+
     // MARK: - evaluate(actionClass:invokedToolNames:)
 
     func testEvaluateResearchIsAlwaysVerified() {
