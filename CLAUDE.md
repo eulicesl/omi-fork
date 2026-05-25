@@ -1,4 +1,7 @@
-# Omi Development Guide
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 <!-- Official guidance for writing these files:
      CLAUDE.md: https://docs.anthropic.com/en/docs/claude-code/memory
      AGENTS.md: https://developers.openai.com/codex/guides/agents-md
