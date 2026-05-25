@@ -229,6 +229,31 @@ struct FloatingControlBarView: View {
                             context: notification.context
                         )
 
+                        // Fast path: deterministic desktop intents (open Chrome,
+                        // Safari, Finder, or a URL in a known browser). Routing
+                        // these through the LLM only adds latency and refusal
+                        // risk — we already know the exact `open(1)` invocation.
+                        // Falls through to the agent path when no direct match.
+                        if let action = ProactiveTaskExecute.directDesktopAction(
+                            title: notification.title,
+                            message: notification.message,
+                            context: notification.context
+                        ) {
+                            let notificationId = notification.id
+                            let titleForPill = notification.title
+                            FloatingControlBarManager.shared.dismissCurrentNotification()
+                            Task {
+                                _ = await AgentPillsManager.shared.spawnDirectActionForNotification(
+                                    notificationId: notificationId,
+                                    query: query,
+                                    model: model,
+                                    title: titleForPill,
+                                    action: action
+                                )
+                            }
+                            return
+                        }
+
                         // Sprint 3 / P7 — preflight. The launchTelegram case
                         // is best-effort: ExecutePreflight already called
                         // `open -a Telegram`, so we proceed to spawn the

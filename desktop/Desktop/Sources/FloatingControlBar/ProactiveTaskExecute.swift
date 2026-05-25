@@ -99,6 +99,122 @@ enum ProactiveTaskExecute {
         """
     }
 
+    // MARK: - Direct-action fast path
+
+    /// Deterministic local actions that don't need an LLM turn — opening
+    /// apps and URLs. Detected at the Execute click site so we can short
+    /// the highest-confidence intents straight to `open(1)` instead of
+    /// paying for a model round trip that can refuse.
+    enum DirectDesktopAction: Equatable {
+        case openApplication(name: String)
+        case openURL(url: URL, browserName: String?)
+    }
+
+    /// Inspect a notification's title/message/context for a high-confidence
+    /// "open X" intent. Returns nil whenever in doubt — the agent path is
+    /// always the fallback, so a missed match merely degrades to today's
+    /// behavior. A false positive would surprise the user, so the matcher
+    /// only fires when the verbs *and* targets are unambiguous.
+    static func directDesktopAction(
+        title: String,
+        message: String,
+        context: FloatingBarNotificationContext? = nil
+    ) -> DirectDesktopAction? {
+        let combined = [
+            title,
+            message,
+            context?.sourceApp ?? "",
+            context?.windowTitle ?? "",
+            context?.contextSummary ?? "",
+            context?.currentActivity ?? "",
+            context?.reasoning ?? "",
+            context?.detail ?? "",
+        ]
+        .joined(separator: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let lower = combined.lowercased()
+        guard lower.contains("open") || lower.contains("launch") else { return nil }
+
+        let browserName = lower.contains("chrome") || lower.contains("google chrome")
+            ? "Google Chrome"
+            : nil
+        if let url = firstURL(in: combined) {
+            return .openURL(url: url, browserName: browserName)
+        }
+        if lower.contains("react") && lower.contains("docs") {
+            return .openURL(url: URL(string: "https://react.dev")!, browserName: browserName)
+        }
+
+        if lower.contains("google chrome") || lower.contains("chrome") {
+            return .openApplication(name: "Google Chrome")
+        }
+        if lower.contains("safari") {
+            return .openApplication(name: "Safari")
+        }
+        if lower.contains("finder") {
+            return .openApplication(name: "Finder")
+        }
+        return nil
+    }
+
+    /// Execute a direct desktop action via `/usr/bin/open`. Returns a short
+    /// human-readable summary suitable for the pill's `latestActivity`.
+    /// Throws on non-zero exit so the caller can surface the failure.
+    static func perform(_ action: DirectDesktopAction) async throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        switch action {
+        case .openApplication(let name):
+            process.arguments = ["-a", name]
+        case .openURL(let url, let browserName):
+            if let browserName, !browserName.isEmpty {
+                process.arguments = ["-a", browserName, url.absoluteString]
+            } else {
+                process.arguments = [url.absoluteString]
+            }
+        }
+
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "ProactiveTaskExecute",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "open exited with status \(process.terminationStatus)"]
+            )
+        }
+
+        switch action {
+        case .openApplication(let name):
+            return "Opened \(name)."
+        case .openURL(let url, let browserName):
+            if let browserName, !browserName.isEmpty {
+                return "Opened \(url.absoluteString) in \(browserName)."
+            }
+            return "Opened \(url.absoluteString)."
+        }
+    }
+
+    /// Normalize a pill's terminal activity text — trim, fall back to "Done"
+    /// when empty. Kept here so direct-action and LLM-path pills share the
+    /// same shape.
+    static func completionActivityText(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Done" : trimmed
+    }
+
+    private static func firstURL(in text: String) -> URL? {
+        guard
+            let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue),
+            let match = detector.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+            let url = match.url
+        else {
+            return nil
+        }
+        return url
+    }
+
     /// Sprint 3 / P8 — programmatic verification follow-up. Fired on the same
     /// warm session after the main turn returns and the local verification
     /// gate (P2) says a write tool was called. Forces the model to produce

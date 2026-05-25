@@ -142,4 +142,86 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         XCTAssertTrue(s.contains("Never claim \"done\" without proof"))
         XCTAssertTrue(s.contains("PREFERRED CHANNELS"))
     }
+
+    // MARK: - Direct desktop action detector (Chrome refusal fix)
+
+    func testDirectDesktopActionDetectsOpenChromeTask() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open Chrome",
+            message: "Open Google Chrome so I can continue browsing.",
+            context: nil
+        )
+        XCTAssertEqual(action, .openApplication(name: "Google Chrome"))
+    }
+
+    func testDirectDesktopActionDetectsUrlInChromeTask() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open docs",
+            message: "Open https://react.dev/learn in Chrome",
+            context: nil
+        )
+        XCTAssertEqual(
+            action,
+            .openURL(url: URL(string: "https://react.dev/learn")!, browserName: "Google Chrome")
+        )
+    }
+
+    func testDirectDesktopActionMapsReactDocsRequestToReactURL() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Task",
+            message: "Open the React docs in Chrome",
+            context: nil
+        )
+        XCTAssertEqual(
+            action,
+            .openURL(url: URL(string: "https://react.dev")!, browserName: "Google Chrome")
+        )
+    }
+
+    func testDirectDesktopActionDetectsSafari() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open Safari",
+            message: "Launch Safari",
+            context: nil
+        )
+        XCTAssertEqual(action, .openApplication(name: "Safari"))
+    }
+
+    func testDirectDesktopActionDetectsFinder() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open Finder",
+            message: "Show me Finder",
+            context: nil
+        )
+        XCTAssertEqual(action, .openApplication(name: "Finder"))
+    }
+
+    func testDirectDesktopActionIgnoresUnrelatedTasks() {
+        // Conservative-by-design: anything without "open" or "launch" + a
+        // known target must defer to the agent path.
+        let nilCases: [(String, String)] = [
+            ("Send Daniel the standup summary", "Daniel asked for the bullet summary."),
+            ("Create /tmp/file.txt", "Write 'hello' to a file"),
+            ("Schedule lunch with Anna", "Block 12:30-1:30 tomorrow"),
+        ]
+        for (title, message) in nilCases {
+            XCTAssertNil(
+                ProactiveTaskExecute.directDesktopAction(title: title, message: message, context: nil),
+                "expected no direct-action match for: \(title)"
+            )
+        }
+    }
+
+    func testCompletionActivityTextDoesNotTruncateFinalMessage() {
+        let long = String(repeating: "Final task result with enough detail. ", count: 8)
+        XCTAssertEqual(
+            ProactiveTaskExecute.completionActivityText(from: long),
+            long.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    func testCompletionActivityTextFallsBackToDoneOnEmptyInput() {
+        XCTAssertEqual(ProactiveTaskExecute.completionActivityText(from: ""), "Done")
+        XCTAssertEqual(ProactiveTaskExecute.completionActivityText(from: "   \n  "), "Done")
+    }
 }
