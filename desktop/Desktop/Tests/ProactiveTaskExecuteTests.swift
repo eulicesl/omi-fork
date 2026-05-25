@@ -815,6 +815,54 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Browser + URL treated as single action (Codex P2, fix v11)
+
+    /// Review feedback (Codex P2): the naïve distinct-target guard
+    /// deferred whenever an app target and a URL both appeared. But
+    /// `title="Open Chrome"` + `message="Open https://example.dev in
+    /// Chrome"` is a single deterministic action: `open -a Chrome
+    /// https://example.dev`. Deferring it reintroduced the LLM-path
+    /// refusal class this PR exists to fix. App+URL is now fast-pathed
+    /// when the app is a browser; otherwise still deferred.
+    func testDirectDesktopActionFastPathsBrowserAppPlusUrlSingleIntent() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Chrome",
+                message: "Open https://example.dev in Chrome"
+            ),
+            .openURL(
+                url: URL(string: "https://example.dev")!,
+                browserName: "Google Chrome"
+            ),
+            "open-chrome title + open-URL-in-chrome message is a single intent — must fast-path"
+        )
+    }
+
+    func testDirectDesktopActionFastPathsLaunchSafariPlusUrlSingleIntent() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Safari",
+                message: "Open https://example.dev/path in Safari"
+            ),
+            .openURL(
+                url: URL(string: "https://example.dev/path")!,
+                browserName: "Safari"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnNonBrowserAppPlusUrl() {
+        // Finder isn't a browser — combining "Open Finder" with a URL
+        // is two disparate intents. Defer.
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Finder",
+                message: "Open https://example.com"
+            ),
+            "non-browser app + URL = two disparate intents → defer"
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal

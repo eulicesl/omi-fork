@@ -235,8 +235,22 @@ enum ProactiveTaskExecute {
                 return String(intentText[captureRange])
             }
         )
-        if uniqueAppTargets.count + uniqueUrls.count > 1 {
-            return nil
+
+        // Two or more distinct app targets — clearly multi-step
+        // ("Open Chrome and Safari" wants both Chrome and Safari).
+        if uniqueAppTargets.count > 1 { return nil }
+        // Two or more distinct URLs — also multi-step.
+        if uniqueUrls.count > 1 { return nil }
+        // App + URL — defer UNLESS the app is a browser, in which case
+        // "Open Chrome" + "Open https://x in Chrome" collapses to the
+        // single deterministic action `open -a Chrome https://x`. The
+        // URL routing below picks up `browserName` from the app-phrase
+        // capture or the "in <browser>" suffix and emits the combined
+        // `.openURL(url, browserName)` action.
+        if !uniqueAppTargets.isEmpty && !uniqueUrls.isEmpty {
+            let appTarget = uniqueAppTargets.first ?? ""
+            let isBrowser = appTarget == "google chrome" || appTarget == "safari"
+            if !isBrowser { return nil }
         }
 
         // Multi-step guard. If the user's imperative chains more work after
