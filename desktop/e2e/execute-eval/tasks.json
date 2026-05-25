@@ -1,0 +1,471 @@
+{
+  "comment": "30-task Execute reliability eval set. Split 6 per category, half happy-path / half rough-edges. Each entry's `notification` is injected directly via the automation bridge to skip the real TaskAssistant promotion loop. `ground_truth` is consumed by graders/<category>.py.",
+  "tasks": [
+    {
+      "id": "send-telegram-daniel-summary",
+      "category": "send",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "New task: Send Daniel the bullet summary of yesterday's standup on Telegram",
+        "context": {
+          "source_app": "Telegram",
+          "window_title": "Chat with Daniel",
+          "detail": "Send Daniel the bullet summary of yesterday's standup on Telegram",
+          "reasoning": "Promoted from staged tasks (priority=high, source=conversation)"
+        }
+      },
+      "ground_truth": {
+        "platform": "telegram",
+        "recipient": "Daniel",
+        "expected_substring": "standup"
+      }
+    },
+    {
+      "id": "send-slack-design-q4-metrics",
+      "category": "send",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Post the Q4 metrics to #design in Slack",
+        "context": {
+          "source_app": "Slack",
+          "window_title": "#design",
+          "detail": "Q4 metrics: 12% growth, 4% churn, 88% NPS"
+        }
+      },
+      "ground_truth": {
+        "platform": "slack",
+        "recipient": "#design",
+        "expected_substring": "Q4"
+      }
+    },
+    {
+      "id": "send-imessage-mom-running-late",
+      "category": "send",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Text Mom that I'm running 15 minutes late",
+        "context": {
+          "detail": "Running 15 minutes late, see you soon"
+        }
+      },
+      "ground_truth": {
+        "platform": "messages",
+        "recipient": "Mom",
+        "expected_substring": "15 minutes"
+      }
+    },
+    {
+      "id": "send-gmail-reply-recruiter",
+      "category": "send",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Reply to the recruiter email — politely decline",
+        "context": {
+          "source_app": "Mail",
+          "detail": "Recruiter from FAANG, polite decline"
+        }
+      },
+      "ground_truth": {
+        "platform": "gmail",
+        "recipient": "recruiter",
+        "expected_substring": "thank"
+      }
+    },
+    {
+      "id": "send-telegram-ambiguous-recipient",
+      "category": "send",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Send Sarah the meeting notes",
+        "context": null
+      },
+      "ground_truth": {
+        "platform": "telegram",
+        "recipient": "Sarah",
+        "expected_substring": "meeting"
+      }
+    },
+    {
+      "id": "send-slack-when-not-running",
+      "category": "send",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Tell @alex on Slack the deploy is green",
+        "context": {
+          "source_app": "Slack",
+          "detail": "Deploy green"
+        }
+      },
+      "ground_truth": {
+        "platform": "slack",
+        "recipient": "@alex",
+        "expected_substring": "green"
+      },
+      "setup": "quit Slack before this trial"
+    },
+
+    {
+      "id": "schedule-design-review-friday",
+      "category": "schedule",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Schedule design review for Friday 2pm",
+        "context": {
+          "source_app": "Calendar",
+          "detail": "Design review, Friday 14:00 PT"
+        }
+      },
+      "ground_truth": {
+        "calendar": "Work",
+        "title": "Design review",
+        "expected_window_iso": "FRIDAY_14:00_LOCAL"
+      }
+    },
+    {
+      "id": "schedule-dentist-next-week",
+      "category": "schedule",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Add a 30-min dentist reminder for next Tuesday at 10am",
+        "context": null
+      },
+      "ground_truth": {
+        "calendar": "Personal",
+        "title": "Dentist",
+        "expected_window_iso": "NEXT_TUE_10:00_LOCAL"
+      }
+    },
+    {
+      "id": "schedule-recurring-standup",
+      "category": "schedule",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Create a recurring daily standup at 9:30am for two weeks",
+        "context": null
+      },
+      "ground_truth": {
+        "calendar": "Work",
+        "title": "Standup",
+        "expected_window_iso": "DAILY_09:30_LOCAL_X10"
+      }
+    },
+    {
+      "id": "schedule-conflict-detection",
+      "category": "schedule",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Book a 1hr focus block tomorrow morning",
+        "context": null
+      },
+      "ground_truth": {
+        "calendar": "Personal",
+        "title": "Focus",
+        "expected_window_iso": "TOMORROW_MORNING_LOCAL"
+      }
+    },
+    {
+      "id": "schedule-tz-handling",
+      "category": "schedule",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Schedule a call with the London team at 4pm London time on Thursday",
+        "context": null
+      },
+      "ground_truth": {
+        "calendar": "Work",
+        "title": "London",
+        "expected_window_iso": "THURSDAY_16:00_EUROPE_LONDON"
+      }
+    },
+    {
+      "id": "schedule-no-calendar-mcp",
+      "category": "schedule",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Set a reminder for the gym tonight at 7",
+        "context": null
+      },
+      "ground_truth": {
+        "calendar": "Personal",
+        "title": "Gym",
+        "expected_window_iso": "TODAY_19:00_LOCAL"
+      },
+      "setup": "disconnect the calendar MCP before this trial"
+    },
+
+    {
+      "id": "draft-cold-email-to-investor",
+      "category": "draft",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Draft a 200-word cold email to introduce the company to investor@example.com",
+        "context": null
+      },
+      "ground_truth": {
+        "platform": "gmail",
+        "expected_substring": "introduction"
+      }
+    },
+    {
+      "id": "draft-followup-from-meeting",
+      "category": "draft",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Draft a follow-up to yesterday's meeting with the design team",
+        "context": {
+          "source_app": "Mail",
+          "detail": "Follow up on design review action items"
+        }
+      },
+      "ground_truth": {
+        "platform": "gmail",
+        "expected_substring": "design"
+      }
+    },
+    {
+      "id": "draft-slack-DM-to-pm",
+      "category": "draft",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Draft a Slack DM to the PM asking for status",
+        "context": {
+          "source_app": "Slack"
+        }
+      },
+      "ground_truth": {
+        "platform": "slack",
+        "expected_substring": "status"
+      }
+    },
+    {
+      "id": "draft-decline-meeting-invite",
+      "category": "draft",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Draft a polite decline to the marketing sync invite",
+        "context": null
+      },
+      "ground_truth": {
+        "platform": "gmail",
+        "expected_substring": "decline"
+      }
+    },
+    {
+      "id": "draft-multilang-spanish",
+      "category": "draft",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Draft a brief reply in Spanish thanking the supplier",
+        "context": null
+      },
+      "ground_truth": {
+        "platform": "gmail",
+        "expected_substring": "gracias"
+      }
+    },
+    {
+      "id": "draft-very-long-summary",
+      "category": "draft",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Draft a one-page summary of yesterday's all-hands and save it to drafts",
+        "context": null
+      },
+      "ground_truth": {
+        "platform": "gmail",
+        "expected_substring": "all-hands"
+      }
+    },
+
+    {
+      "id": "create-file-meeting-notes",
+      "category": "create_file",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Create a markdown file at ~/Desktop/q4-meeting-notes.md with the headings 'Goals', 'Risks', 'Owners'",
+        "context": null
+      },
+      "ground_truth": {
+        "path": "~/Desktop/q4-meeting-notes.md",
+        "expected_substring": "## Goals"
+      }
+    },
+    {
+      "id": "create-file-todo-list",
+      "category": "create_file",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Drop a todo list at ~/Desktop/today.md with five items",
+        "context": null
+      },
+      "ground_truth": {
+        "path": "~/Desktop/today.md",
+        "expected_substring": "- ["
+      }
+    },
+    {
+      "id": "create-file-script-stub",
+      "category": "create_file",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Create ~/Desktop/probe.sh that pings example.com once and prints the latency",
+        "context": null
+      },
+      "ground_truth": {
+        "path": "~/Desktop/probe.sh",
+        "expected_substring": "ping"
+      }
+    },
+    {
+      "id": "create-file-already-exists",
+      "category": "create_file",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Save a notes file at ~/Desktop/today.md (overwrite if needed) with three bullet points",
+        "context": null
+      },
+      "ground_truth": {
+        "path": "~/Desktop/today.md",
+        "expected_substring": "- "
+      },
+      "setup": "pre-create ~/Desktop/today.md with stale content"
+    },
+    {
+      "id": "create-file-permissions-denied",
+      "category": "create_file",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Save a config file at /etc/omi-test.conf",
+        "context": null
+      },
+      "ground_truth": {
+        "path": "/etc/omi-test.conf",
+        "expected_substring": "config"
+      },
+      "expected_outcome": "agent should surface the permission failure cleanly, not claim success"
+    },
+    {
+      "id": "create-file-bad-path",
+      "category": "create_file",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Drop a draft at ~/SomeFolderThatDoesntExist/draft.md",
+        "context": null
+      },
+      "ground_truth": {
+        "path": "~/SomeFolderThatDoesntExist/draft.md",
+        "expected_substring": "draft"
+      }
+    },
+
+    {
+      "id": "open-url-docs",
+      "category": "open_url",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Open the React docs in Chrome",
+        "context": null
+      },
+      "ground_truth": {
+        "expected_url_prefix": "https://react.dev"
+      }
+    },
+    {
+      "id": "open-url-pr-review",
+      "category": "open_url",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Pull up the PR I was reviewing — #7480",
+        "context": {
+          "source_app": "Google Chrome",
+          "detail": "Last PR I opened was beastoin/omi#7480"
+        }
+      },
+      "ground_truth": {
+        "expected_url_prefix": "https://github.com"
+      }
+    },
+    {
+      "id": "open-url-flight-status",
+      "category": "open_url",
+      "difficulty": "happy_path",
+      "notification": {
+        "title": "Task",
+        "message": "Open my flight status — United UA89 tomorrow",
+        "context": null
+      },
+      "ground_truth": {
+        "expected_url_prefix": "https://www.united.com"
+      }
+    },
+    {
+      "id": "open-url-ambiguous",
+      "category": "open_url",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Open the dashboard",
+        "context": null
+      },
+      "ground_truth": {
+        "expected_url_prefix": "https://"
+      }
+    },
+    {
+      "id": "open-url-chrome-not-default",
+      "category": "open_url",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Open hackernews",
+        "context": null
+      },
+      "ground_truth": {
+        "expected_url_prefix": "https://news.ycombinator.com"
+      },
+      "setup": "set Safari as default browser before this trial"
+    },
+    {
+      "id": "open-url-no-playwright-extension",
+      "category": "open_url",
+      "difficulty": "rough_edges",
+      "notification": {
+        "title": "Task",
+        "message": "Open the latest gmail thread from billing@stripe.com",
+        "context": {
+          "source_app": "Mail"
+        }
+      },
+      "ground_truth": {
+        "expected_url_prefix": "https://mail.google.com"
+      },
+      "setup": "remove playwrightExtensionToken from UserDefaults; should be caught by Sprint 3 / P7 preflight"
+    }
+  ]
+}

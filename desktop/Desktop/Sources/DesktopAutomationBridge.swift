@@ -69,6 +69,144 @@ struct DesktopAutomationOpenConversationRequest: Codable {
   let activateApp: Bool?
 }
 
+struct DesktopAutomationExecuteNotification: Decodable {
+  let title: String
+  let message: String
+  let context: DesktopAutomationExecuteContext?
+}
+
+struct DesktopAutomationExecuteContext: Decodable {
+  let sourceTitle: String?
+  let assistantId: String?
+  let sourceApp: String?
+  let windowTitle: String?
+  let contextSummary: String?
+  let currentActivity: String?
+  let reasoning: String?
+  let detail: String?
+
+  enum CodingKeys: String, CodingKey {
+    case sourceTitle, assistantId, sourceApp, windowTitle, contextSummary, currentActivity
+    case reasoning, detail
+    case sourceTitleSnake = "source_title"
+    case assistantIdSnake = "assistant_id"
+    case sourceAppSnake = "source_app"
+    case windowTitleSnake = "window_title"
+    case contextSummarySnake = "context_summary"
+    case currentActivitySnake = "current_activity"
+  }
+
+  init(
+    sourceTitle: String? = nil,
+    assistantId: String? = nil,
+    sourceApp: String? = nil,
+    windowTitle: String? = nil,
+    contextSummary: String? = nil,
+    currentActivity: String? = nil,
+    reasoning: String? = nil,
+    detail: String? = nil
+  ) {
+    self.sourceTitle = sourceTitle
+    self.assistantId = assistantId
+    self.sourceApp = sourceApp
+    self.windowTitle = windowTitle
+    self.contextSummary = contextSummary
+    self.currentActivity = currentActivity
+    self.reasoning = reasoning
+    self.detail = detail
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    sourceTitle = try c.decodeIfPresent(String.self, forKey: .sourceTitle)
+      ?? c.decodeIfPresent(String.self, forKey: .sourceTitleSnake)
+    assistantId = try c.decodeIfPresent(String.self, forKey: .assistantId)
+      ?? c.decodeIfPresent(String.self, forKey: .assistantIdSnake)
+    sourceApp = try c.decodeIfPresent(String.self, forKey: .sourceApp)
+      ?? c.decodeIfPresent(String.self, forKey: .sourceAppSnake)
+    windowTitle = try c.decodeIfPresent(String.self, forKey: .windowTitle)
+      ?? c.decodeIfPresent(String.self, forKey: .windowTitleSnake)
+    contextSummary = try c.decodeIfPresent(String.self, forKey: .contextSummary)
+      ?? c.decodeIfPresent(String.self, forKey: .contextSummarySnake)
+    currentActivity = try c.decodeIfPresent(String.self, forKey: .currentActivity)
+      ?? c.decodeIfPresent(String.self, forKey: .currentActivitySnake)
+    reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning)
+    detail = try c.decodeIfPresent(String.self, forKey: .detail)
+  }
+
+  func floatingContext(fallbackTitle: String) -> FloatingBarNotificationContext? {
+    let fields = [sourceApp, windowTitle, contextSummary, currentActivity, reasoning, detail]
+    guard fields.contains(where: { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }) else {
+      return nil
+    }
+    return FloatingBarNotificationContext(
+      sourceTitle: sourceTitle ?? fallbackTitle,
+      assistantId: assistantId ?? "task",
+      sourceApp: sourceApp,
+      windowTitle: windowTitle,
+      contextSummary: contextSummary,
+      currentActivity: currentActivity,
+      reasoning: reasoning,
+      detail: detail
+    )
+  }
+}
+
+struct DesktopAutomationExecuteSpawnRequest: Decodable {
+  let notification: DesktopAutomationExecuteNotification
+  let notificationId: UUID?
+  let model: String?
+
+  enum CodingKeys: String, CodingKey {
+    case notification, notificationId, model
+    case notificationIdSnake = "notification_id"
+  }
+
+  init(notification: DesktopAutomationExecuteNotification, notificationId: UUID? = nil, model: String? = nil) {
+    self.notification = notification
+    self.notificationId = notificationId
+    self.model = model
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    notification = try c.decode(DesktopAutomationExecuteNotification.self, forKey: .notification)
+    notificationId = try c.decodeIfPresent(UUID.self, forKey: .notificationId)
+      ?? c.decodeIfPresent(UUID.self, forKey: .notificationIdSnake)
+    model = try c.decodeIfPresent(String.self, forKey: .model)
+  }
+
+  var query: String {
+    ProactiveTaskExecute.buildQuery(
+      title: notification.title,
+      message: notification.message,
+      context: notification.context?.floatingContext(fallbackTitle: notification.title)
+    )
+  }
+
+}
+
+private struct DesktopAutomationExecuteSpawnResult: Codable {
+  let pillId: String
+  let notificationId: String
+  let model: String
+}
+
+private struct DesktopAutomationExecuteStatusRequest: Decodable {
+  let pillId: String
+
+  enum CodingKeys: String, CodingKey {
+    case pillId
+    case pillIdSnake = "pill_id"
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    pillId = try c.decodeIfPresent(String.self, forKey: .pillId)
+      ?? c.decode(String.self, forKey: .pillIdSnake)
+  }
+}
+
 private struct DesktopAutomationResponse<T: Codable>: Codable {
   let ok: Bool
   let result: T?
@@ -296,6 +434,38 @@ final class DesktopAutomationBridge {
           statusCode: 500
         )
       }
+    case ("POST", "/execute/spawn"):
+      do {
+        let payload = try JSONDecoder().decode(
+          DesktopAutomationExecuteSpawnRequest.self, from: request.body)
+        let result = try await dispatchExecuteSpawn(payload)
+        return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
+      } catch {
+        return jsonResponse(
+          DesktopAutomationResponse<DesktopAutomationExecuteSpawnResult>(
+            ok: false,
+            result: nil,
+            error: error.localizedDescription
+          ),
+          statusCode: 400
+        )
+      }
+    case ("POST", "/execute/status"):
+      do {
+        let payload = try JSONDecoder().decode(
+          DesktopAutomationExecuteStatusRequest.self, from: request.body)
+        let result = try await dispatchExecuteStatus(payload)
+        return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
+      } catch {
+        return jsonResponse(
+          DesktopAutomationResponse<AgentPillsManager.AutomationSnapshot>(
+            ok: false,
+            result: nil,
+            error: error.localizedDescription
+          ),
+          statusCode: 400
+        )
+      }
     default:
       return jsonResponse(
         DesktopAutomationResponse<DesktopAutomationSnapshot>(
@@ -305,6 +475,46 @@ final class DesktopAutomationBridge {
         ),
         statusCode: 404
       )
+    }
+  }
+
+  private func dispatchExecuteSpawn(
+    _ payload: DesktopAutomationExecuteSpawnRequest
+  ) async throws -> DesktopAutomationExecuteSpawnResult {
+    return try await MainActor.run {
+      let notificationId = payload.notificationId ?? UUID()
+      let rawModel = payload.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let model = rawModel?.isEmpty == false ? rawModel! : ProactiveTaskExecute.resolveModel()
+      guard
+        let pill = AgentPillsManager.shared.spawnForNotification(
+          notificationId: notificationId,
+          query: payload.query,
+          model: model,
+          systemPromptSuffix: ProactiveTaskExecute.systemPromptSuffix,
+          systemPromptPrefix: nil
+        )
+      else {
+        throw AutomationError.duplicateExecuteNotification
+      }
+      return DesktopAutomationExecuteSpawnResult(
+        pillId: pill.id.uuidString,
+        notificationId: notificationId.uuidString,
+        model: model
+      )
+    }
+  }
+
+  private func dispatchExecuteStatus(
+    _ payload: DesktopAutomationExecuteStatusRequest
+  ) async throws -> AgentPillsManager.AutomationSnapshot {
+    guard let id = UUID(uuidString: payload.pillId) else {
+      throw AutomationError.invalidPillId
+    }
+    return try await MainActor.run {
+      guard let snapshot = AgentPillsManager.shared.automationSnapshot(pillID: id) else {
+        throw AutomationError.pillNotFound
+      }
+      return snapshot
     }
   }
 
@@ -401,6 +611,23 @@ final class DesktopAutomationBridge {
       completion: .contentProcessed { _ in
         connection.cancel()
       })
+  }
+}
+
+private enum AutomationError: LocalizedError {
+  case duplicateExecuteNotification
+  case invalidPillId
+  case pillNotFound
+
+  var errorDescription: String? {
+    switch self {
+    case .duplicateExecuteNotification:
+      return "duplicate_execute_notification"
+    case .invalidPillId:
+      return "invalid_pill_id"
+    case .pillNotFound:
+      return "pill_not_found"
+    }
   }
 }
 

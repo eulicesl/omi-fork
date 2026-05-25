@@ -219,17 +219,51 @@ struct FloatingControlBarView: View {
                 // informational — spawning an agent there made no sense.
                 if notification.assistantId == "task" {
                     Button {
-                        let model = ShortcutSettings.shared.selectedModel.isEmpty
-                            ? "claude-sonnet-4-6"
-                            : ShortcutSettings.shared.selectedModel
+                        // Execute is the highest-tool-count agentic surface; pin
+                        // Opus regardless of the user's inline-bar model. Override
+                        // via `defaults write … OmiExecuteModel "<id>"`.
+                        let model = ProactiveTaskExecute.resolveModel()
                         let query = ProactiveTaskExecute.buildQuery(
                             title: notification.title,
-                            message: notification.message
+                            message: notification.message,
+                            context: notification.context
                         )
-                        _ = AgentPillsManager.shared.spawn(
+
+                        // Sprint 3 / P7 — preflight. The launchTelegram case
+                        // is best-effort: ExecutePreflight already called
+                        // `open -a Telegram`, so we proceed to spawn the
+                        // pill — the agent's first osascript call will
+                        // confirm the app is up.
+                        let preflight = ExecutePreflight.check(
+                            query: query,
+                            context: notification.context
+                        )
+                        switch preflight {
+                        case .needs(.installPlaywrightExtension):
+                            // Reuse the same setup sheet ChatProvider used
+                            // to lift mid-query. Doing it now saves a wasted
+                            // LLM round trip. The sheet binds to the
+                            // sharedFloatingProvider's @Published flag.
+                            if let p = FloatingControlBarManager.shared.sharedFloatingProvider {
+                                p.needsBrowserExtensionSetup = true
+                            }
+                            FloatingControlBarManager.shared.dismissCurrentNotification()
+                            return
+                        case .needs, .ready:
+                            break
+                        }
+
+                        // Dedup by notification ID (60s TTL) so a double-click
+                        // doesn't spawn two pills racing to send the same thing.
+                        // The floating-bar prefix carries the "always check
+                        // memories / never ask follow-ups" rules; the Execute
+                        // suffix overrides the conciseness clause for this pill.
+                        _ = AgentPillsManager.shared.spawnForNotification(
+                            notificationId: notification.id,
                             query: query,
                             model: model,
-                            systemPromptSuffix: ProactiveTaskExecute.systemPromptSuffix
+                            systemPromptSuffix: ProactiveTaskExecute.systemPromptSuffix,
+                            systemPromptPrefix: ChatProvider.floatingBarSystemPromptPrefix
                         )
                         FloatingControlBarManager.shared.dismissCurrentNotification()
                     } label: {

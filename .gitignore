@@ -221,3 +221,18 @@ app/macos/Runner/LocalDev.entitlements
 # Generated browser snapshots (contain PII)
 builds-snapshot.md
 *-snapshot.md
+
+# OpenMemory - IDE/Assistant specific rules
+.cursor/rules/openmemory.mdc
+AGENTS.md
+
+# Local Cursor hook state
+.cursor/hooks/state/
+
+# Local-only agent memory dump
+openmemory.md
+
+# Execute eval — local-only test config + run outputs + macOS metadata
+desktop/e2e/execute-eval/tasks.local.json
+desktop/e2e/execute-eval/results/
+desktop/e2e/execute-eval/**/.DS_Store

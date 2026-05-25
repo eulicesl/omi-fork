@@ -24,10 +24,31 @@ final class AgentPill: ObservableObject, Identifiable {
         }
     }
 
+    /// Whether the pill's query expects the agent to *take an action* on the
+    /// user's apps (Send / Reply / Create / Schedule / …) vs. produce a
+    /// research-y reply. Used by `ExecuteVerificationGate` so we only demote
+    /// pills to `.failed("no tool called")` when a tool *was* expected.
+    enum ActionClass {
+        case actionable
+        case research
+    }
+
     let id = UUID()
     let query: String
     let createdAt: Date
     let model: String
+    /// Whether this pill was spawned from a proactive task notification's
+    /// Execute button. Controls the verification gate and the retry loop —
+    /// both are Execute-mode opt-ins so user-driven "spawn 3 agents" pills
+    /// keep their existing single-shot, no-gate behavior.
+    let isExecuteMode: Bool
+    /// Derived from the query at spawn time so the gate can run without
+    /// re-parsing the prompt.
+    let actionClass: ActionClass
+    /// Set by Sprint 3 / P8 after the verification turn returns. nil when
+    /// the pill is research-class (no verification fired) or when the
+    /// verification turn was skipped because the local gate already failed.
+    @Published var verification: ProactiveTaskExecute.VerificationResult?
 
     @Published var title: String
     @Published var status: Status = .queued
@@ -36,15 +57,20 @@ final class AgentPill: ObservableObject, Identifiable {
     @Published var aiMessage: ChatMessage?
     @Published var completedAt: Date?
     @Published var suggestedFollowUps: [String] = []
+    /// Number of attempts so far (1 on first run, 2 on a single retry). Used
+    /// by the pill UI to surface "Retrying… (2/2)" and by analytics.
+    @Published var attemptCount: Int = 0
 
     /// Convenience: how long the agent has been running (or ran).
     var elapsed: TimeInterval {
         (completedAt ?? Date()).timeIntervalSince(createdAt)
     }
 
-    init(query: String, model: String) {
+    init(query: String, model: String, isExecuteMode: Bool = false) {
         self.query = query
         self.model = model
+        self.isExecuteMode = isExecuteMode
+        self.actionClass = ExecuteVerificationGate.classify(query: query)
         self.title = AgentPill.deriveTitle(from: query)
         self.createdAt = Date()
     }
@@ -89,6 +115,15 @@ final class AgentPillsManager: ObservableObject {
     private var messageCountByPill: [UUID: Int] = [:]
     private var bootChain: Task<Void, Never> = Task {}
 
+    /// Notification IDs we've already spawned an Execute pill for in the last
+    /// `executeDedupTTL` seconds. Prevents a double-click on the Execute
+    /// button (or two clicks while the agent is warming up) from launching
+    /// two parallel pills racing to send the same message / create the same
+    /// event. Cleared on a delay so a long-running task can be re-triggered
+    /// later if the user genuinely wants to retry.
+    private var recentExecuteNotificationIds: Set<UUID> = []
+    private let executeDedupTTL: TimeInterval = 60
+
     private init() {}
 
     /// Routing decision for an Ask Omi message — does it stay inline in the
@@ -101,6 +136,22 @@ final class AgentPillsManager: ObservableObject {
         let route: Route
         let title: String?
         let ack: String?
+    }
+
+    struct AutomationSnapshot: Codable {
+        let pillId: String
+        let title: String
+        let status: String
+        let error: String?
+        let latestActivity: String
+        let attemptCount: Int
+        let actionClass: String
+        let isExecuteMode: Bool
+        let invokedToolNames: [String]
+        let verificationVerified: Bool?
+        let verificationEvidence: String?
+        let completedAt: String?
+        let aiText: String?
     }
 
     /// Ask Claude Haiku whether the message is a quick info question (→ chat)
@@ -287,10 +338,54 @@ final class AgentPillsManager: ObservableObject {
         return first ?? spawn(query: query, model: model, fromVoice: fromVoice)
     }
 
+    /// Spawn an Execute pill for a proactive task notification. Dedupes by
+    /// `notificationId` so a double-click (or two clicks while the bridge is
+    /// warming up) doesn't fire two parallel pills against the same task.
+    /// Returns nil when a recent pill already covers this notification.
+    ///
+    /// Execute pills opt in to (a) the verification gate (`ExecuteVerificationGate`),
+    /// (b) a single transparent retry on transient bridge errors and gate
+    /// misses. Both are intentionally Execute-mode-only — user-driven
+    /// "spawn 3 agents" pills keep their single-shot semantics so a
+    /// transient bridge blip doesn't silently double the LLM cost.
+    @discardableResult
+    func spawnForNotification(
+        notificationId: UUID,
+        query: String,
+        model: String,
+        systemPromptSuffix: String? = nil,
+        systemPromptPrefix: String? = nil
+    ) -> AgentPill? {
+        if recentExecuteNotificationIds.contains(notificationId) {
+            log("AgentPillsManager: ignoring duplicate Execute click for notification \(notificationId)")
+            return nil
+        }
+        recentExecuteNotificationIds.insert(notificationId)
+        let ttl = executeDedupTTL
+        DispatchQueue.main.asyncAfter(deadline: .now() + ttl) { [weak self] in
+            self?.recentExecuteNotificationIds.remove(notificationId)
+        }
+
+        return spawn(
+            query: query,
+            model: model,
+            systemPromptSuffix: systemPromptSuffix,
+            systemPromptPrefix: systemPromptPrefix,
+            isExecuteMode: true
+        )
+    }
+
     /// Spawn a new agent pill. Each pill gets its own ChatProvider so the
     /// pills truly run in parallel. Bridge boots are staggered through
     /// `bootChain` so we never race ACP startup; once a pill's bridge is
     /// warmed it sends concurrently with everything else.
+    ///
+    /// `systemPromptPrefix` defaults to the floating-bar "1-2 sentences, no
+    /// follow-ups" prefix because most pills are spawned from user voice / text
+    /// queries that want the inline-bar tone. Execute pills override this with
+    /// `nil` — see `spawnForNotification` — because the floating-bar concise
+    /// rules conflict with the Execute "use as many tool calls as you need"
+    /// suffix, and prepended rules tend to win over appended ones in practice.
     @discardableResult
     func spawn(
         query: String,
@@ -298,9 +393,11 @@ final class AgentPillsManager: ObservableObject {
         fromVoice: Bool = false,
         preFetchedTitle: String? = nil,
         preFetchedAck: String? = nil,
-        systemPromptSuffix: String? = nil
+        systemPromptSuffix: String? = nil,
+        systemPromptPrefix: String? = ChatProvider.floatingBarSystemPromptPrefix,
+        isExecuteMode: Bool = false
     ) -> AgentPill {
-        let pill = AgentPill(query: query, model: model)
+        let pill = AgentPill(query: query, model: model, isExecuteMode: isExecuteMode)
         if let preFetchedTitle, !preFetchedTitle.isEmpty {
             pill.title = preFetchedTitle
         }
@@ -379,17 +476,181 @@ final class AgentPillsManager: ObservableObject {
             // Bridge is up; flip to running and fire the prompt. Concurrent
             // with any other pill that's already past this point.
             pill.status = .running
-            await provider.sendMessage(
-                pill.query,
-                model: pill.model,
-                systemPromptSuffix: systemPromptSuffix,
-                systemPromptPrefix: ChatProvider.floatingBarSystemPromptPrefix,
-                sessionKey: "agent-\(pill.id.uuidString)"
-            )
+
+            // Sprint 2 / P3 — single transparent retry for Execute pills.
+            // maxAttempts = 1 for everything else (the user-driven "spawn N
+            // agents" path keeps single-shot semantics so a transient bridge
+            // blip doesn't silently double LLM cost).
+            let maxAttempts = pill.isExecuteMode ? 2 : 1
+            for attempt in 1...maxAttempts {
+                pill.attemptCount = attempt
+                if attempt > 1 {
+                    pill.latestActivity = "Retrying (\(attempt)/\(maxAttempts))…"
+                    pill.transcript.append("Retrying (\(attempt)/\(maxAttempts))")
+                    log("AgentPillsManager: retry \(attempt)/\(maxAttempts) for pill \(pill.id)")
+                }
+                // Fresh sessionKey on retry so we don't reuse a broken
+                // session. Format must match `pill.id` discoverability —
+                // append the attempt only when > 1 so attempt 1 keeps the
+                // original key for any debug log correlation.
+                let sessionKey = attempt == 1
+                    ? "agent-\(pill.id.uuidString)"
+                    : "agent-\(pill.id.uuidString)-r\(attempt)"
+                await provider.sendMessage(
+                    pill.query,
+                    model: pill.model,
+                    systemPromptSuffix: systemPromptSuffix,
+                    systemPromptPrefix: systemPromptPrefix,
+                    sessionKey: sessionKey
+                )
+                let outcome = await self.evaluateAttempt(
+                    pill: pill,
+                    provider: provider,
+                    sessionKey: sessionKey
+                )
+                if outcome == .terminal || attempt == maxAttempts {
+                    break
+                }
+                // Clear provider state between attempts so a stale errorMessage
+                // from the failed attempt doesn't bleed into the next run's
+                // `complete()` evaluation. The placeholder AI message inside
+                // ChatProvider is already finalized at this point.
+                provider.errorMessage = nil
+            }
             self.complete(pill: pill, provider: provider)
         }
 
         return pill
+    }
+
+    /// Verdict on a single send attempt — does the retry loop continue?
+    enum AttemptOutcome { case terminal, retry }
+
+    /// Decide whether the attempt that just finished is good enough to ship
+    /// (`.terminal`) or should be retried (`.retry`). Non-Execute pills are
+    /// always terminal — they're single-shot by contract.
+    ///
+    /// For actionable Execute pills that pass the local tool-usage gate, we
+    /// run Sprint 3 / P8's programmatic verification turn here so a
+    /// negative verdict triggers a retry rather than a misleading `.done`.
+    private func evaluateAttempt(
+        pill: AgentPill,
+        provider: ChatProvider,
+        sessionKey: String
+    ) async -> AttemptOutcome {
+        guard pill.isExecuteMode else { return .terminal }
+
+        if let errText = provider.errorMessage, !errText.isEmpty {
+            // Retry only on transient transport errors. User stops + model-
+            // reported impossibility are terminal.
+            return Self.isRetryableErrorText(errText) ? .retry : .terminal
+        }
+
+        let invoked = Self.invokedToolNames(from: pill.aiMessage)
+        let gate = ExecuteVerificationGate.evaluate(
+            actionClass: pill.actionClass,
+            invokedToolNames: invoked
+        )
+        switch gate {
+        case .unverified:
+            log("AgentPillsManager: gate flagged pill \(pill.id) as unverified — will retry")
+            return .retry
+        case .verified:
+            // Local gate passed. For actionable pills, fire the
+            // programmatic verification turn on the same warm session for
+            // proof-quality evidence. Research pills skip — there's nothing
+            // to verify.
+            if pill.actionClass == .research {
+                return .terminal
+            }
+            let result = await Self.runVerificationTurn(
+                pill: pill,
+                provider: provider,
+                sessionKey: sessionKey
+            )
+            pill.verification = result
+            if let result {
+                if result.verified {
+                    return .terminal
+                } else {
+                    log("AgentPillsManager: verification turn failed for pill \(pill.id) — evidence: \(result.evidence)")
+                    return .retry
+                }
+            }
+            // Verification turn errored / unparseable. Don't infinite-loop —
+            // accept the local gate's verdict. Logged so we can tell when
+            // this happens in production.
+            log("AgentPillsManager: verification turn unparseable for pill \(pill.id) — accepting local-gate verdict")
+            return .terminal
+        }
+    }
+
+    /// Run Sprint 3 / P8's verification follow-up. Reuses the pill's warm
+    /// provider/session so the model already has the conversation history
+    /// in cache. Returns nil when the turn errors or the reply doesn't
+    /// parse as `{verified, evidence}` JSON.
+    private static func runVerificationTurn(
+        pill: AgentPill,
+        provider: ChatProvider,
+        sessionKey: String
+    ) async -> ProactiveTaskExecute.VerificationResult? {
+        // Snapshot the AI message before the verification turn appends.
+        // We never want to display the verification prompt itself as a
+        // separate bubble — only its parsed evidence.
+        let messageCountBefore = provider.messages.count
+        pill.latestActivity = "Verifying…"
+
+        await provider.sendMessage(
+            ProactiveTaskExecute.verificationPrompt,
+            model: pill.model,
+            sessionKey: sessionKey
+        )
+
+        guard provider.errorMessage?.isEmpty != false else {
+            return nil
+        }
+        // The newest AI message after our send is the verification reply.
+        let newer = provider.messages.dropFirst(messageCountBefore)
+        guard let reply = newer.last(where: { $0.sender == .ai }) else {
+            return nil
+        }
+        return ProactiveTaskExecute.parseVerification(reply.text)
+    }
+
+    /// Walk a finished AI message's content blocks and pull out every
+    /// `.toolCall` name. Used by the verification gate.
+    static func invokedToolNames(from message: ChatMessage?) -> [String] {
+        guard let message else { return [] }
+        var names: [String] = []
+        for block in message.contentBlocks {
+            if case .toolCall(_, let name, _, _, _, _) = block {
+                names.append(name)
+            }
+        }
+        return names
+    }
+
+    /// Heuristic for whether a bridge / network / OOM error is worth a retry.
+    /// Matches on the user-visible error text since BridgeError isn't directly
+    /// observable from the pill side.
+    static func isRetryableErrorText(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let retryableMarkers = [
+            "took too long",         // 180s watchdog
+            "process exited",        // BridgeError.processExited
+            "out of memory",         // BridgeError.outOfMemory
+            "ai not available",      // bridge failed to start
+            "ai not running",
+            "timeout",
+            "connection",
+            "stalled",               // Sprint 3 / P9 will produce this
+        ]
+        let nonRetryableMarkers = [
+            "limit reached", "upgrade",   // billing / usage cap
+            "stopped",                    // user pressed stop
+        ]
+        if nonRetryableMarkers.contains(where: { lower.contains($0) }) { return false }
+        return retryableMarkers.contains(where: { lower.contains($0) })
     }
 
     /// Force-dismiss a pill.
@@ -397,6 +658,46 @@ final class AgentPillsManager: ObservableObject {
         cleanup(pillID: pillID)
         if hoveredPillID == pillID { hoveredPillID = nil }
         if pinnedPillID == pillID { pinnedPillID = nil }
+    }
+
+    func automationSnapshot(pillID: UUID) -> AutomationSnapshot? {
+        guard let pill = pills.first(where: { $0.id == pillID }) else { return nil }
+        let status: String
+        let error: String?
+        switch pill.status {
+        case .queued:
+            status = "queued"
+            error = nil
+        case .starting:
+            status = "starting"
+            error = nil
+        case .running:
+            status = "running"
+            error = nil
+        case .done:
+            status = "done"
+            error = nil
+        case .failed(let reason):
+            status = "failed"
+            error = reason
+        }
+
+        let formatter = ISO8601DateFormatter()
+        return AutomationSnapshot(
+            pillId: pill.id.uuidString,
+            title: pill.title,
+            status: status,
+            error: error,
+            latestActivity: pill.latestActivity,
+            attemptCount: pill.attemptCount,
+            actionClass: pill.actionClass == .actionable ? "actionable" : "research",
+            isExecuteMode: pill.isExecuteMode,
+            invokedToolNames: Self.invokedToolNames(from: pill.aiMessage),
+            verificationVerified: pill.verification?.verified,
+            verificationEvidence: pill.verification?.evidence,
+            completedAt: pill.completedAt.map { formatter.string(from: $0) },
+            aiText: pill.aiMessage?.text
+        )
     }
 
     private func cleanup(pillID: UUID) {
@@ -465,6 +766,45 @@ final class AgentPillsManager: ObservableObject {
         if let errorText = provider.errorMessage, !errorText.isEmpty {
             pill.status = .failed(errorText)
             pill.latestActivity = errorText
+        } else if pill.isExecuteMode {
+            // Sprint 2 / P2 — verification gate. Demote to `.failed` if the
+            // pill is actionable but no write/send/script tool fired. We
+            // already retried once in the spawn loop, so reaching here means
+            // every attempt was unverified.
+            let invoked = Self.invokedToolNames(from: pill.aiMessage)
+            let gate = ExecuteVerificationGate.evaluate(
+                actionClass: pill.actionClass,
+                invokedToolNames: invoked
+            )
+            switch gate {
+            case .verified:
+                // Sprint 3 / P8 — if the verification turn ran and produced
+                // a negative verdict, prefer its message over the model's
+                // free-text. We've already exhausted retries by the time
+                // we reach complete(), so this is the terminal outcome.
+                if let v = pill.verification, !v.verified {
+                    let reason = "Could not verify: \(v.evidence.isEmpty ? "no evidence" : v.evidence)"
+                    log("AgentPillsManager: pill \(pill.id) failed verification turn after \(pill.attemptCount) attempt(s)")
+                    pill.status = .failed(reason)
+                    pill.latestActivity = reason
+                    break
+                }
+                pill.status = .done
+                if let v = pill.verification, v.verified, !v.evidence.isEmpty {
+                    // Surface the proof to the user instead of the model's
+                    // free-text claim — "Sent — last message reads 'Hey…'"
+                    pill.latestActivity = "Done — \(v.evidence)"
+                } else if let last = pill.aiMessage, !last.text.isEmpty {
+                    let trimmed = last.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    pill.latestActivity = String(trimmed.prefix(140))
+                } else {
+                    pill.latestActivity = "Done"
+                }
+            case .unverified(let reason):
+                log("AgentPillsManager: pill \(pill.id) failed verification gate after \(pill.attemptCount) attempt(s) — \(reason)")
+                pill.status = .failed(reason)
+                pill.latestActivity = reason
+            }
         } else {
             pill.status = .done
             if let last = pill.aiMessage, !last.text.isEmpty {

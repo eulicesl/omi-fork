@@ -466,7 +466,7 @@ class ChatProvider: ObservableObject {
     // MARK: - Floating Bar System Prompt Prefix
     /// Static prefix injected at the top of the system prompt for floating bar sessions.
     /// Defined here so it can be referenced both at warmup time and at query time.
-    static let floatingBarSystemPromptPrefix = """
+    nonisolated static let floatingBarSystemPromptPrefix = """
 ================================================================================
 🚨 FLOATING BAR MODE — READ THIS FIRST BEFORE ANYTHING ELSE 🚨
 ================================================================================

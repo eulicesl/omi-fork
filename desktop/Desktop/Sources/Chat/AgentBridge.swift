@@ -492,6 +492,14 @@ actor AgentBridge {
     // No per-message timeout — rely on process termination (handleTermination) to
     // detect a dead bridge. A per-message timeout (like Zed's old low_speed_timeout)
     // fires prematurely during long-running tools (sentry-logs, slow API calls, etc.).
+    //
+    // TODO(Sprint 3 / P9): track `lastBridgeActivityAt` (any inbound message
+    // type) and emit a synthetic `bridge_stalled` warning at 30 s, followed
+    // by interrupt() + BridgeError.stalled at 60 s. The current "no timeout"
+    // policy is correct for long-running tools but blind to messaging-layer
+    // stalls (pi-mono silently dies after `turn_end stopReason=toolUse`
+    // post-laptop-sleep — observed). Stall detection should be opt-in per
+    // call so non-Execute callers keep today's behavior.
     while true {
       let message = try await waitForMessage()
 
