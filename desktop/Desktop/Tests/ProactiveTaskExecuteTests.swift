@@ -470,6 +470,47 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Multi-step deferral: text BEFORE the match (Codex P1, fix v6)
+
+    /// Review feedback (Codex P1 on v5): the v5 scan only inspected
+    /// `afterText`. A title/message split that puts the secondary work
+    /// *before* the open phrase — e.g. title="Send Daniel the summary",
+    /// message="Open Chrome" — left `afterText` empty and false-passed
+    /// the guard. The scan must now cover BOTH sides of the match.
+    func testDirectDesktopActionDefersOnSecondaryWorkBeforeOpen() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Send Daniel the standup summary",
+                message: "Open Chrome"
+            ),
+            "secondary work in the title (before the open phrase) must defer too"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnSecondaryVerbBeforeMatchSameField() {
+        // Single message field, secondary verb appears before the open.
+        // Pre-fix this fast-pathed because afterText was empty.
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Reply to Sarah. Open Chrome."
+            )
+        )
+    }
+
+    func testDirectDesktopActionStillFastPathsTitleSaysTaskBeforeOpen() {
+        // Production shape (title="Task") plus before-match scan must
+        // still fast-path "Task" / "Open Chrome" — "task" isn't a
+        // secondary action verb.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome"
+            ),
+            .openApplication(name: "Google Chrome")
+        )
+    }
+
     // MARK: - Matched-parenthesis URL preservation (Codex P2, fix v5)
 
     /// Review feedback (Codex P2, v4 follow-up): the v4 trailing-strip

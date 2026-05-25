@@ -105,7 +105,7 @@ enum ProactiveTaskExecute {
     /// apps and URLs. Detected at the Execute click site so we can short
     /// the highest-confidence intents straight to `open(1)` instead of
     /// paying for a model round trip that can refuse.
-    enum DirectDesktopAction: Equatable {
+    enum DirectDesktopAction: Equatable, Sendable {
         case openApplication(name: String)
         case openURL(url: URL, browserName: String?)
     }
@@ -183,23 +183,28 @@ enum ProactiveTaskExecute {
         // 2. Any *secondary action verb* in the text after the matched open
         //    phrase. Catches sentence-break and title/message-split
         //    multi-step cases like "Open Chrome. Send Daniel ..." that
-        //    have no leading conjunction.
+        //    have no leading conjunction. Both BEFORE and AFTER the match
+        //    are scanned, so an intent like `title: "Send Daniel the
+        //    summary"` + `message: "Open Chrome"` (no conjunction, work
+        //    appears *before* the open phrase) also defers.
         //
-        // Both checks are scoped to text *after* the matched open phrase
-        // so a URL whose path contains the literal "and" or "send" (e.g.
-        // ".../this-and-that", "/send/") doesn't false-trip.
+        // The scan excludes the matched span itself so URL content with
+        // literal "and"/"send" in a path (e.g. ".../this-and-that",
+        // "/send/") doesn't false-trip the deferral.
         //
         // Conservative-by-design: a false positive (deferring something we
         // could have fast-pathed) just costs an LLM round trip; a false
         // negative silently drops user-requested work.
-        let matchEndUTF16: Int = {
-            if let appMatch { return NSMaxRange(appMatch.range) }
-            if let urlMatch { return NSMaxRange(urlMatch.range) }
-            return (intentText as NSString).length
+        let nsIntent = intentText as NSString
+        let matchedRange: NSRange = {
+            if let appMatch { return appMatch.range }
+            if let urlMatch { return urlMatch.range }
+            return NSRange(location: 0, length: 0)
         }()
-        let afterText = (intentText as NSString)
-            .substring(from: matchEndUTF16)
-        if afterText.range(
+        let beforeText = nsIntent.substring(to: matchedRange.location)
+        let afterText = nsIntent.substring(from: NSMaxRange(matchedRange))
+        let scanText = beforeText + " " + afterText
+        if scanText.range(
             of: multiStepPattern,
             options: [.regularExpression, .caseInsensitive]
         ) != nil {
@@ -271,42 +276,54 @@ enum ProactiveTaskExecute {
         return nil
     }
 
-    /// Execute a direct desktop action via `/usr/bin/open`. Returns a short
-    /// human-readable summary suitable for the pill's `latestActivity`.
-    /// Throws on non-zero exit so the caller can surface the failure.
+    /// Execute a direct desktop action via `/usr/bin/open`. Returns a
+    /// short human-readable summary suitable for the pill's
+    /// `latestActivity`. Throws on non-zero exit so the caller can
+    /// surface the failure.
+    ///
+    /// The subprocess (`process.run()` + `process.waitUntilExit()`) is
+    /// run inside `Task.detached` so callers on `@MainActor` (the
+    /// floating-bar button, the bridge dispatch) don't block the main
+    /// thread for the duration of `open(1)`. App-launch can take a
+    /// second on a cold start; stalling the UI on that is unacceptable.
     static func perform(_ action: DirectDesktopAction) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        switch action {
-        case .openApplication(let name):
-            process.arguments = ["-a", name]
-        case .openURL(let url, let browserName):
-            if let browserName, !browserName.isEmpty {
-                process.arguments = ["-a", browserName, url.absoluteString]
-            } else {
-                process.arguments = [url.absoluteString]
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            switch action {
+            case .openApplication(let name):
+                process.arguments = ["-a", name]
+            case .openURL(let url, let browserName):
+                if let browserName, !browserName.isEmpty {
+                    process.arguments = ["-a", browserName, url.absoluteString]
+                } else {
+                    process.arguments = [url.absoluteString]
+                }
             }
-        }
 
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw NSError(
-                domain: "ProactiveTaskExecute",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "open exited with status \(process.terminationStatus)"]
-            )
-        }
-
-        switch action {
-        case .openApplication(let name):
-            return "Opened \(name)."
-        case .openURL(let url, let browserName):
-            if let browserName, !browserName.isEmpty {
-                return "Opened \(url.absoluteString) in \(browserName)."
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw NSError(
+                    domain: "ProactiveTaskExecute",
+                    code: Int(process.terminationStatus),
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "open exited with status \(process.terminationStatus)"
+                    ]
+                )
             }
-            return "Opened \(url.absoluteString)."
-        }
+
+            switch action {
+            case .openApplication(let name):
+                return "Opened \(name)."
+            case .openURL(let url, let browserName):
+                if let browserName, !browserName.isEmpty {
+                    return "Opened \(url.absoluteString) in \(browserName)."
+                }
+                return "Opened \(url.absoluteString)."
+            }
+        }.value
     }
 
     /// Normalize a pill's terminal activity text — trim, fall back to "Done"
