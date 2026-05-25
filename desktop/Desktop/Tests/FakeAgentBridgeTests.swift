@@ -205,6 +205,80 @@ final class FakeAgentBridgeTests: XCTestCase {
     }
   }
 
+  // MARK: - Timed-event tap (PR 1 usage contract)
+
+  /// `onTimedEvent` must fire exactly once per script event, in script
+  /// order, with the event's simulated timestamp. This is the hook PR 1's
+  /// `StallDetector` tests use to advance a test clock before any typed
+  /// callback observes the event.
+  func testTimedEventTapFiresOncePerEventInScriptOrder() async {
+    let script = FakeBridgeScenario.happyPath()
+    let bridge = FakeAgentBridge(script: script)
+
+    actor Recorder {
+      var seen: [(Int, FakeBridgeEvent)] = []
+      func append(_ atMs: Int, _ event: FakeBridgeEvent) {
+        seen.append((atMs, event))
+      }
+    }
+    let recorder = Recorder()
+
+    _ = await bridge.runInstant(
+      onTimedEvent: { atMs, event in await recorder.append(atMs, event) }
+    )
+
+    let seen = await recorder.seen
+    XCTAssertEqual(seen.count, script.events.count)
+    for (i, observed) in seen.enumerated() {
+      XCTAssertEqual(observed.0, script.events[i].atMs, "atMs mismatch at index \(i)")
+      XCTAssertEqual(observed.1, script.events[i].event, "event mismatch at index \(i)")
+    }
+  }
+
+  /// Demonstrates the PR 1 usage pattern end-to-end: a detector wired
+  /// only to `onTimedEvent` observes every script event with its
+  /// simulated timestamp, and a separately-wired typed callback fires
+  /// only for the events the test cares about. The two observers see
+  /// different views of the same run by design — the timed tap is the
+  /// full timeline, typed callbacks are a filtered convenience view.
+  func testTimedTapAndTypedCallbacksRecordIndependentlyOfEachOther() async {
+    let script = FakeBridgeScenario.midStreamStall(
+      deltasBeforeStall: 2,
+      stallDurationMs: 25_000
+    )
+    let bridge = FakeAgentBridge(script: script)
+
+    actor TimedTapRecorder { var events: [(Int, FakeBridgeEvent)] = []
+      func append(_ atMs: Int, _ event: FakeBridgeEvent) { events.append((atMs, event)) }
+    }
+    actor TextDeltaRecorder { var texts: [String] = []
+      func append(_ text: String) { texts.append(text) }
+    }
+    let timedRecorder = TimedTapRecorder()
+    let textRecorder = TextDeltaRecorder()
+
+    _ = await bridge.runInstant(
+      onTimedEvent: { atMs, event in await timedRecorder.append(atMs, event) },
+      onTextDelta: { text in
+        Task { await textRecorder.append(text) }
+      }
+    )
+    await Task.yield()
+
+    let timedEvents = await timedRecorder.events
+    XCTAssertEqual(
+      timedEvents.count,
+      script.events.count,
+      "timed tap is the full timeline (every script event)"
+    )
+    let textDeltas = await textRecorder.texts
+    XCTAssertEqual(
+      textDeltas.count,
+      3,
+      "typed callback is a filtered view (2 pre-stall + 1 post-recovery deltas)"
+    )
+  }
+
   // MARK: - Inventory
 
   /// Guard against scope drift: PR 0b commits to exactly 10 failure

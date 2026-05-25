@@ -88,7 +88,18 @@ actor FakeAgentBridge {
   ///
   /// All callbacks are optional. Callers wire only the ones they care
   /// about; unwired events still appear in the returned record.
+  ///
+  /// `onTimedEvent` is the **source of truth for ordering-sensitive
+  /// consumers** (e.g. PR 1's `StallDetector`). It fires for every
+  /// script event with the event's simulated timestamp and is async, so
+  /// detector-actor observations can complete inline before the loop
+  /// advances. Typed callbacks below are synchronous convenience for
+  /// tests that don't need timestamps — they cannot safely observe
+  /// actor state (any spawned `Task` would race against subsequent
+  /// dispatches). If a consumer cares about *when* an event arrived,
+  /// wire `onTimedEvent`, not the typed callbacks.
   func runInstant(
+    onTimedEvent: ((Int, FakeBridgeEvent) async -> Void)? = nil,
     onInit: ((String) -> Void)? = nil,
     onTextDelta: ((String) -> Void)? = nil,
     onThinkingDelta: ((String) -> Void)? = nil,
@@ -116,6 +127,10 @@ actor FakeAgentBridge {
           outcome: .interrupted
         )
       }
+
+      // Fires before the typed callbacks so tests can advance simulated
+      // time prior to detectors observing the typed event.
+      await onTimedEvent?(timed.atMs, timed.event)
 
       switch timed.event {
       case .initSession(let sessionId):
