@@ -72,36 +72,86 @@ enum ToolTimeoutOutcome<Success: Sendable>: Sendable {
 }
 
 /// Run `operation` with a deadline. Returns `.success` if `operation`
-/// completes within `seconds`, `.timedOut` otherwise. The operation
-/// task is cancelled on timeout — well-behaved tools that check
-/// `Task.isCancelled` will stop work; tools that don't will continue
-/// running in the background until they finish naturally (their
-/// result is discarded). Acceptable trade-off for V1 since the
-/// bridge has already received the synthetic-error response.
+/// completes within `seconds`, `.timedOut` otherwise.
+///
+/// **Why unstructured concurrency:** the obvious implementation with
+/// `withTaskGroup` + `group.cancelAll()` does NOT actually short-
+/// circuit on timeout. Structured concurrency awaits all child tasks
+/// before the group closure returns — including a child running
+/// non-cooperative work (a blocking SQL call, an unchecked network
+/// request) that ignores `Task.isCancelled`. The timeout flag lands
+/// but the caller still waits for the slow operation to finish. That
+/// defeats the entire point.
+///
+/// Instead: a `CheckedContinuation` plus a thread-safe coordinator
+/// resolves the timeout the instant either arm fires. The losing arm
+/// gets `.cancel()`'d but the caller is already unblocked.
+/// Non-cooperative tools that ignore cancellation continue running
+/// in the background until they finish naturally; their result is
+/// discarded by the coordinator's `isResolved` guard.
+///
+/// Acceptable trade-off for V1: the bridge has already received the
+/// synthetic-error response by the time the background task finishes,
+/// so a stale completion has nowhere to go. PR 9 may revisit if
+/// background tool work becomes a measurable cost.
+///
+/// Credit: structured-concurrency gotcha surfaced by Gemini Code
+/// Assist review on PR #28 (gemini-code-assist[bot], 2026-05-25).
 func withToolTimeout<Success: Sendable>(
   seconds: Int,
   operation: @Sendable @escaping () async -> Success
 ) async -> ToolTimeoutOutcome<Success> {
-  await withTaskGroup(of: ToolTimeoutOutcome<Success>.self) { group in
-    group.addTask {
-      .success(await operation())
+  await withCheckedContinuation { continuation in
+    let state = ToolTimeoutCoordinator<Success>(continuation: continuation)
+
+    let opTask = Task {
+      let result = await operation()
+      state.resolve(with: .success(result))
     }
-    group.addTask {
-      // Sleep can throw on cancellation; treat that as "operation
-      // finished first and cancelled us" — sleeping arm returns the
-      // timeout case only if it ran to completion.
+
+    let timeoutTask = Task {
       do {
         try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
-        return .timedOut(elapsedSeconds: seconds)
+        opTask.cancel()
+        state.resolve(with: .timedOut(elapsedSeconds: seconds))
       } catch {
-        // Cancelled — return a sentinel the loser-cancel handles.
-        // The first-result branch below ignores this when the
-        // operation task already returned.
-        return .timedOut(elapsedSeconds: seconds)
+        // Cancelled because the operation finished first — nothing
+        // to do; the operation task already resolved the state.
       }
     }
-    let result = await group.next()!
-    group.cancelAll()
-    return result
+
+    // Cancel the timeout task once the operation finishes. Without
+    // this, the timeout sleep keeps running in the background even
+    // after the result is delivered — harmless but wasteful.
+    Task {
+      _ = await opTask.result
+      timeoutTask.cancel()
+    }
+  }
+}
+
+/// Thread-safe single-fire continuation guard used by
+/// `withToolTimeout`. Whichever of {operation completion, timeout
+/// expiry} fires first wins; subsequent resolutions are silently
+/// dropped via the `isResolved` flag.
+///
+/// `@unchecked Sendable` is justified by the `NSLock` discipline —
+/// every mutation goes through `resolve(with:)` under the lock.
+private final class ToolTimeoutCoordinator<Success: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<ToolTimeoutOutcome<Success>, Never>?
+  private var isResolved = false
+
+  init(continuation: CheckedContinuation<ToolTimeoutOutcome<Success>, Never>) {
+    self.continuation = continuation
+  }
+
+  func resolve(with outcome: ToolTimeoutOutcome<Success>) {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !isResolved else { return }
+    isResolved = true
+    continuation?.resume(returning: outcome)
+    continuation = nil
   }
 }

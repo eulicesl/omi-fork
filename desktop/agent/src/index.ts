@@ -100,9 +100,18 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
  *
  * Heartbeats carry the originating QueryMessage.id as `turnId` so the
  * Swift detector can correlate them with the active turn.
+ *
+ * `lastUpstreamEventMs` is reset to `turnStartMs` at the top so the
+ * first heartbeat reports a sensible `upstreamLastEventMs` even if
+ * the bridge has been idle for a long stretch between turns. Without
+ * this reset, the global initialized at bridge startup carries
+ * across idle periods and the first heartbeat reports an inflated
+ * gap (e.g. "upstreamLastEventMs = 3 hours"). Bug surfaced by
+ * Gemini Code Assist review on PR #28 (2026-05-25).
  */
 async function withHeartbeat<T>(turnId: string, fn: () => Promise<T>): Promise<T> {
   const turnStartMs = Date.now();
+  lastUpstreamEventMs = turnStartMs;
   const interval = setInterval(() => {
     send({
       type: "heartbeat",

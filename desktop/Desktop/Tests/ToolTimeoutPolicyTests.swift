@@ -84,4 +84,43 @@ final class ToolTimeoutPolicyTests: XCTestCase {
       XCTFail("expected .timedOut, got \(outcome)")
     }
   }
+
+  /// Regression test for the structured-concurrency bug Gemini Code
+  /// Assist flagged on PR #28. The previous `withTaskGroup`
+  /// implementation would "return" the timeout classification but
+  /// implicitly await the operation child task — so a non-
+  /// cooperative operation that ignores `Task.isCancelled` blocked
+  /// the caller until it finished naturally, defeating the timeout.
+  ///
+  /// This test uses `Thread.sleep(forTimeInterval:)` (synchronous,
+  /// thread-blocking, IGNORES Task cancellation) as a worst-case
+  /// non-cooperative operation. The whole call must return within
+  /// the deadline + a small margin (200ms) — if `withToolTimeout`
+  /// still waits for the operation, the test takes 4s and fails the
+  /// wall-clock assertion.
+  func testWithToolTimeoutShortCircuitsNonCooperativeOperation() async {
+    let start = Date()
+    let outcome = await withToolTimeout(
+      seconds: 1,
+      operation: {
+        // Synchronous, non-cancellable sleep. Does NOT honor
+        // Task.isCancelled. Represents the worst-case tool that
+        // blocks the thread inside a C/Swift sync call.
+        Thread.sleep(forTimeInterval: 4)
+        return "should-never-be-returned"
+      }
+    )
+    let elapsed = Date().timeIntervalSince(start)
+    if case .timedOut = outcome {
+      // ok
+    } else {
+      XCTFail("expected .timedOut, got \(outcome)")
+    }
+    XCTAssertLessThan(
+      elapsed,
+      1.5,  // 1s deadline + 500ms margin for scheduling jitter
+      "withToolTimeout must return immediately on timeout, even when the operation ignores Task.isCancelled. " +
+        "Elapsed \(elapsed)s suggests the implementation is implicitly awaiting the operation."
+    )
+  }
 }
