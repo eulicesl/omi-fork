@@ -63,11 +63,58 @@ const omiToolsStdioScript = join(__dirname, "omi-tools-stdio.js");
 
 // --- Helpers ---
 
+/**
+ * Wall-clock ms timestamp of the most recent non-heartbeat outbound
+ * send. Heartbeats use this to populate `upstreamLastEventMs`.
+ * Initialized to bridge startup so the first heartbeat in a fresh
+ * session reports a meaningful gap rather than 0.
+ */
+let lastUpstreamEventMs = Date.now();
+
 function send(msg: OutboundMessage): void {
+  // Track non-heartbeat sends so heartbeats can report how long it's
+  // been since the upstream model produced anything. Reading
+  // `msg.type` directly avoids the cost of a JSON.stringify just to
+  // detect heartbeats.
+  if (msg.type !== "heartbeat") {
+    lastUpstreamEventMs = Date.now();
+  }
   try {
     process.stdout.write(JSON.stringify(msg) + "\n");
   } catch (err) {
     logErr(`Failed to write to stdout: ${err}`);
+  }
+}
+
+/**
+ * PR 8: heartbeat cadence (ms) while a turn is in flight. Locked at
+ * 5 s per `MACOS_CHAT_RELIABILITY_ROADMAP.md` Locked Values; PR 9 tunes
+ * against telemetry.
+ */
+const HEARTBEAT_INTERVAL_MS = 5_000;
+
+/**
+ * Run `fn` while emitting a heartbeat every `HEARTBEAT_INTERVAL_MS` ms.
+ * The interval is cleared on resolution OR rejection, so a thrown
+ * error path doesn't leak the timer.
+ *
+ * Heartbeats carry the originating QueryMessage.id as `turnId` so the
+ * Swift detector can correlate them with the active turn.
+ */
+async function withHeartbeat<T>(turnId: string, fn: () => Promise<T>): Promise<T> {
+  const turnStartMs = Date.now();
+  const interval = setInterval(() => {
+    send({
+      type: "heartbeat",
+      turnId,
+      uptimeMs: Date.now() - turnStartMs,
+      upstreamLastEventMs: Date.now() - lastUpstreamEventMs,
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(interval);
   }
 }
 
@@ -655,6 +702,14 @@ async function preWarmSession(cwd?: string, sessionConfigs?: WarmupSessionConfig
 // --- Handle query from Swift ---
 
 async function handleQuery(msg: QueryMessage): Promise<void> {
+  // PR 8: emit a heartbeat every 5 s while this turn is in flight so
+  // the Swift detector can distinguish "upstream slow" from "bridge
+  // dead". Wraps the entire ACP query flow; cleared on both success
+  // and rejection paths via the finally inside withHeartbeat.
+  return withHeartbeat(msg.id, () => handleQueryInner(msg));
+}
+
+async function handleQueryInner(msg: QueryMessage): Promise<void> {
   if (activeAbort) {
     activeAbort.abort();
     activeAbort = null;
@@ -749,7 +804,7 @@ async function handleQuery(msg: QueryMessage): Promise<void> {
           logErr(`set_model failed on reuse (stale session?), recreating: ${setModelErr}`);
           sessions.delete(getRetryDeleteKey(sessionKey));
           activeSessionId = "";
-          return handleQuery(msg);
+          return handleQueryInner(msg);
         }
       }
       logErr(`Reusing existing ACP session: ${sessionId} (key=${sessionKey})`);
@@ -840,7 +895,7 @@ async function handleQuery(msg: QueryMessage): Promise<void> {
         sessions.delete(getRetryDeleteKey(sessionKey));
         activeSessionId = "";
         await startAuthFlow();
-        return handleQuery(msg);
+        return handleQueryInner(msg);
       }
       // If session/prompt failed while reusing an existing session, retry once with a fresh one.
       // Do NOT retry if we already started fresh (isNewSession) — that would infinite-loop.
@@ -848,7 +903,7 @@ async function handleQuery(msg: QueryMessage): Promise<void> {
         logErr(`session/prompt failed with existing session, retrying with fresh session: ${err}`);
         sessions.delete(getRetryDeleteKey(sessionKey));
         activeSessionId = "";
-        return handleQuery(msg);
+        return handleQueryInner(msg);
       }
       throw err;
     }
@@ -876,7 +931,7 @@ async function handleQuery(msg: QueryMessage): Promise<void> {
       authRetryCount++;
       logErr(`Query failed with auth error (code=${(err as AcpError).code}), starting OAuth flow (attempt ${authRetryCount})`);
       await startAuthFlow();
-      return handleQuery(msg);
+      return handleQueryInner(msg);
     }
     const errMsg = err instanceof Error ? err.message : String(err);
     logErr(`Query error: ${errMsg}`);
@@ -1253,6 +1308,11 @@ async function runPiMonoMode(): Promise<void> {
           piActiveAbort = null;
         }
 
+        // PR 8: heartbeat for the lifetime of this pi-mono query. The
+        // wrapper's finally clears the interval even if the inner
+        // session/prompt logic throws below, so a failure path can't
+        // leak a forever-running timer.
+        await withHeartbeat(qm.id, async () => {
         try {
           // Resolve session by key. Pi-mono's single-process model means
           // only one sessionKey can "own" the subprocess at a time — any
@@ -1363,6 +1423,7 @@ async function runPiMonoMode(): Promise<void> {
           logErr(`Pi-mono query error: ${err}`);
           send({ type: "error", message: String(err) });
         }
+        });  // end withHeartbeat
         break;
       }
 

@@ -147,6 +147,33 @@ export interface AuthSuccessMessage {
   type: "auth_success";
 }
 
+/**
+ * Periodic liveness signal emitted while a turn is in flight. Lets the
+ * Swift `StallDetector` distinguish "bridge is alive but the upstream
+ * model is slow" from "bridge subprocess is dead." See
+ * `desktop/docs/MACOS_CHAT_RELIABILITY_ROADMAP.md` PR 8.
+ *
+ * - `turnId` matches the corresponding `QueryMessage.id`.
+ * - `uptimeMs` is the time since the bridge started this turn.
+ * - `upstreamLastEventMs` is the time since the most recent
+ *   non-heartbeat outbound message (text_delta, tool_use, etc.). Long
+ *   `upstreamLastEventMs` while heartbeats keep arriving = upstream is
+ *   slow but the bridge is fine.
+ *
+ * Cadence: 5 s (PR 8 default; tuned in PR 9).
+ *
+ * Back-compat: Swift's parser drops unknown message types via a
+ * `default: log + return nil` (AgentBridge.swift parseMessage), so an
+ * older Swift client receiving this message just logs and continues —
+ * safe to roll the bridge forward independently.
+ */
+export interface HeartbeatMessage {
+  type: "heartbeat";
+  turnId: string;
+  uptimeMs: number;
+  upstreamLastEventMs: number;
+}
+
 export type OutboundMessage =
   | InitMessage
   | TextDeltaMessage
@@ -157,4 +184,5 @@ export type OutboundMessage =
   | ResultMessage
   | ErrorMessage
   | AuthRequiredMessage
-  | AuthSuccessMessage;
+  | AuthSuccessMessage
+  | HeartbeatMessage;
