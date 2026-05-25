@@ -2794,9 +2794,43 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                     self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
                 }
             }
-            let toolCallHandler: AgentBridge.ToolCallHandler = { callId, name, input in
+            // PR 3: capture bridgeMode locally so the @Sendable
+            // tool handler closure below doesn't need to reach into
+            // self at await time. The mode is read once per turn
+            // and doesn't change mid-turn.
+            let capturedBridgeMode = bridgeMode
+            let toolCallHandler: AgentBridge.ToolCallHandler = { [weak self] callId, name, input in
                 let toolCall = ToolCall(name: name, arguments: input, thoughtSignature: nil)
-                let result = await ChatToolExecutor.execute(toolCall)
+
+                // PR 3: per-tool timeout policy applies in piMono mode
+                // only. userClaude mode (Claude Code / Bash / file)
+                // legitimately runs longer; full userClaude tool
+                // contract is V2 scope per roadmap.
+                let isPiMono = capturedBridgeMode == BridgeMode.piMono.rawValue
+                let result: String
+                if isPiMono {
+                    let timeoutSec = ToolTimeoutPolicy.v1Defaults.seconds(for: name)
+                    switch await withToolTimeout(
+                        seconds: timeoutSec,
+                        operation: { await ChatToolExecutor.execute(toolCall) }
+                    ) {
+                    case .success(let r):
+                        result = r
+                    case .timedOut(let elapsed):
+                        log("ChatProvider: tool '\(name)' exceeded \(elapsed)s timeout — emitting synthetic tool_result error")
+                        result = "ERROR: tool_timeout — tool '\(name)' did not complete within \(elapsed)s. Try a different approach or a simpler query."
+                        Task { @MainActor [weak self] in
+                            self?.markToolAsFailed(
+                                messageId: aiMessageId,
+                                toolName: name,
+                                toolUseId: nil
+                            )
+                        }
+                    }
+                } else {
+                    result = await ChatToolExecutor.execute(toolCall)
+                }
+
                 log("OMI tool \(name) executed for callId=\(callId)")
                 // Track SQL query stats for metadata
                 if name == "execute_sql" {
@@ -3507,6 +3541,35 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     /// with `.failed`.
     private func completeRemainingToolCalls(messageId: String) {
         resolveRemainingToolCalls(messageId: messageId, terminalStatus: .completed)
+    }
+
+    /// PR 3: mark a specific in-flight tool call block as `.failed`.
+    /// Used by the per-tool timeout path — when a tool exceeds its
+    /// `ToolTimeoutPolicy` ceiling, the synthetic `tool_result` error
+    /// goes to the bridge (so the model can respond) AND this fires
+    /// so the UI block flips to the red xmark icon instead of
+    /// staying in `.running` forever.
+    ///
+    /// Search by `toolUseId` first when provided, fall back to most-
+    /// recent-in-flight-with-matching-name. Mirrors the lookup
+    /// pattern in `addToolActivity(...)` so the timeout path resolves
+    /// to the same block the bridge would have eventually completed.
+    private func markToolAsFailed(messageId: String, toolName: String, toolUseId: String?) {
+        guard let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        for i in stride(from: messages[index].contentBlocks.count - 1, through: 0, by: -1) {
+            if case .toolCall(let id, let name, let status, let existingTuid, let input, let output) = messages[index].contentBlocks[i],
+               status.isInFlight {
+                let matches = (toolUseId != nil && existingTuid == toolUseId)
+                    || (toolUseId == nil && name == toolName)
+                if matches {
+                    messages[index].contentBlocks[i] = .toolCall(
+                        id: id, name: name, status: .failed,
+                        toolUseId: existingTuid, input: input, output: output
+                    )
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Stall detection (PR 1 Commit D)
