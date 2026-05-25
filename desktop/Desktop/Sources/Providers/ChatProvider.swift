@@ -2145,6 +2145,40 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     /// active. Sites are documented inline at each `saveMessage(...)` call.
     private let pendingSaves = PendingSaveCounter()
 
+    // MARK: - PR 0a Chat Reliability Telemetry State
+    //
+    // The three chat.turn.* events use an immutable turnId scoped to
+    // a single sendMessage invocation. The AI message's local UUID at
+    // creation IS the turnId. Persistence swaps `messages[i].id` from
+    // local UUID → server id; the maps below let `rateMessage` look
+    // up the original turnId from whichever id the UI is rating.
+    //
+    // All three maps are cleared on session switch / clearChat to
+    // bound memory growth. They're lossy by design — a missed
+    // mapping silently drops the corresponding telemetry rather than
+    // erroring (telemetry is best-effort).
+
+    /// Server id (or local UUID) → original turnId.
+    private var turnIdByMessageId: [String: String] = [:]
+
+    /// Wall-clock ms of the first text_delta for this turn (used for
+    /// firstTokenMs on chat.turn.completed). nil until the first
+    /// delta arrives — turns that emit zero text deltas leave this nil.
+    private var firstTokenAtMsByTurnId: [String: Int?] = [:]
+
+    /// Stall transitions emitted during this turn (any of .slow, .stalled,
+    /// .upstreamSlow, .bridgeUnresponsive from PR 1 / PR 8). Drives the
+    /// stallEventsEmitted field on chat.turn.completed.
+    private var stallEventCountByTurnId: [String: Int] = [:]
+
+    /// HMAC-SHA256 user-id hasher initialized once per ChatProvider.
+    /// Reads salt from OMI_TELEMETRY_HMAC_SALT (or dev-local fallback).
+    /// The dual-warning startup check fires on first construction.
+    let telemetryHasher: TelemetryUserIdHasher = {
+        TelemetryUserIdHasher.emitStartupWarningIfNeeded()
+        return TelemetryUserIdHasher()
+    }()
+
     /// Fetch new messages from other platforms (e.g. mobile).
     /// Merges new messages into the existing array without disrupting the UI.
     private func pollForNewMessages() async {
@@ -2665,6 +2699,30 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         var sqlRowsReturned = 0
         var sqlQueryCount = 0
 
+        // PR 0a chat-reliability telemetry: stable identifier for this
+        // turn, used by chat.turn.started / completed / feedback. The
+        // turnId is the AI message's INITIAL local UUID — it stays
+        // stable even after persistence swaps `messages[i].id` to the
+        // server id (see `turnIdByMessageId` map below).
+        let turnId = aiMessageId
+        let hashedUserId = AuthState.shared.userId.flatMap { telemetryHasher.hash($0) }
+        turnIdByMessageId[aiMessageId] = turnId
+        firstTokenAtMsByTurnId[turnId] = nil
+        stallEventCountByTurnId[turnId] = 0
+
+        // chat.turn.started fires synchronously, BEFORE any bridge
+        // call, tool call, auth check, or model stream. Required so
+        // started − completed acts as an orphan / stuck-turn detector
+        // — see MACOS_CHAT_RELIABILITY_ROADMAP.md.
+        AnalyticsManager.shared.chatTurnStarted(
+            ChatTurnStartedPayload(
+                turnId: turnId,
+                bridgeMode: bridgeMode,
+                model: model ?? modelOverride,
+                hashedUserId: hashedUserId
+            )
+        )
+
         // PR 1 Commit D: stall detection.
         // The detector observes every bridge event (text deltas, tool
         // activity, etc.) and a 500ms periodic tick task surfaces stall
@@ -2727,6 +2785,11 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 let nowMs = Int(Date().timeIntervalSince1970 * 1000)
                 Task { @MainActor [weak self] in
                     self?.appendToMessage(id: aiMessageId, text: delta)
+                    // PR 0a: capture first-token timestamp once per turn
+                    // for the firstTokenMs field on chat.turn.completed.
+                    if self?.firstTokenAtMsByTurnId[turnId] == nil {
+                        self?.firstTokenAtMsByTurnId[turnId] = nowMs
+                    }
                     let transitions = await stallDetector.step(kind: .other, atMs: nowMs)
                     self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
                 }
@@ -2958,6 +3021,10 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                         messages[syncIndex].id = response.id
                         messages[syncIndex].isSynced = true
                     }
+                    // PR 0a: register the server id → turnId mapping so the
+                    // thumbs-feedback emit fires with the original turnId
+                    // even though the UI rates against the server id.
+                    turnIdByMessageId[response.id] = turnId
                     pendingSaves.end()
                     log("Saved and synced AI response: \(response.id) (session=\(capturedSessionId ?? "nil"), tool_calls=\(toolMetadata != nil ? "yes" : "none"))")
                 } catch {
@@ -2999,6 +3066,25 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 toolNames: toolNames,
                 costUsd: queryResult.costUsd,
                 messageLength: responseLength
+            )
+
+            // PR 0a chat-reliability: success-path chat.turn.completed.
+            // Joined to chat.turn.started by turnId; outcome=.completed.
+            let firstTokenMs = (firstTokenAtMsByTurnId[turnId] ?? nil).map { $0 - turnStartMs }
+            AnalyticsManager.shared.chatTurnCompleted(
+                ChatTurnCompletedPayload(
+                    turnId: turnId,
+                    bridgeMode: bridgeMode,
+                    model: model ?? modelOverride,
+                    hashedUserId: hashedUserId,
+                    outcome: .completed,
+                    totalMs: durationMs,
+                    firstTokenMs: firstTokenMs,
+                    toolCallCount: toolNames.count,
+                    toolNames: toolNames,
+                    stallEventsEmitted: stallEventCountByTurnId[turnId] ?? 0,
+                    errorClass: nil
+                )
             )
 
             // Skip client-side usage recording for piMono — the backend already
@@ -3098,6 +3184,51 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 rawError = "\(error)"
             }
             AnalyticsManager.shared.chatAgentError(error: error.localizedDescription, rawError: rawError)
+
+            // PR 0a chat-reliability: classify error → chat.turn.completed.
+            // Outcome enum is a closed allow-list — privacy contract
+            // forbids raw error strings here, only the enum label and
+            // a structural errorClass (BridgeError case name).
+            let outcome: ChatTurnCompletedPayload.Outcome
+            let errorClass: String?
+            if let bridgeError = error as? BridgeError {
+                switch bridgeError {
+                case .stopped:
+                    outcome = .interrupted
+                    errorClass = "stopped"
+                case .timeout:
+                    outcome = .timeout
+                    errorClass = "timeout"
+                default:
+                    outcome = .errored
+                    // Pull the case name only (e.g. "agentError", "encodingError")
+                    // — String(describing:) on the enum value would include
+                    // the associated error message, which is forbidden by
+                    // the redaction contract.
+                    errorClass = String(describing: bridgeError)
+                        .split(separator: "(").first.map(String.init) ?? "unknown"
+                }
+            } else {
+                outcome = .errored
+                errorClass = "unknown"
+            }
+            let errorDurationMs = Int(Date().timeIntervalSince(queryStartTime) * 1000)
+            let errorFirstTokenMs = (firstTokenAtMsByTurnId[turnId] ?? nil).map { $0 - turnStartMs }
+            AnalyticsManager.shared.chatTurnCompleted(
+                ChatTurnCompletedPayload(
+                    turnId: turnId,
+                    bridgeMode: bridgeMode,
+                    model: model ?? modelOverride,
+                    hashedUserId: hashedUserId,
+                    outcome: outcome,
+                    totalMs: errorDurationMs,
+                    firstTokenMs: errorFirstTokenMs,
+                    toolCallCount: toolNames.count,
+                    toolNames: toolNames,
+                    stallEventsEmitted: stallEventCountByTurnId[turnId] ?? 0,
+                    errorClass: errorClass
+                )
+            )
 
             // Track onboarding errors with full context
             if isOnboarding {
@@ -3402,6 +3533,14 @@ A screenshot may be attached — use it silently only if relevant. Never mention
               let index = messages.firstIndex(where: { $0.id == messageId })
         else { return }
 
+        // PR 0a: tally stall promotions for chat.turn.completed's
+        // stallEventsEmitted field. Counts every transition, including
+        // recoveries to .running — gives a more honest "how much stall
+        // signal did the user see" measure than only counting promotions.
+        if let turnId = turnIdByMessageId[messageId] {
+            stallEventCountByTurnId[turnId, default: 0] += transitions.count
+        }
+
         for transition in transitions {
             guard case .tool(let id, _, let to) = transition else { continue }
             for i in messages[index].contentBlocks.indices {
@@ -3467,6 +3606,35 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             // Track analytics
             if let rating = rating {
                 AnalyticsManager.shared.messageRated(rating: rating)
+
+                // PR 0a chat-reliability: emit chat.turn.feedback joined
+                // by the original turnId (not the current messageId,
+                // which by now is usually the server id post-persistence).
+                // Only emits when rating is thumbs-up (+1) or thumbs-down
+                // (-1); intermediate ratings (if any) silently skip.
+                if let turnId = turnIdByMessageId[messageId] {
+                    let mappedRating: ChatTurnFeedbackPayload.Rating?
+                    if rating > 0 {
+                        mappedRating = .thumbsUp
+                    } else if rating < 0 {
+                        mappedRating = .thumbsDown
+                    } else {
+                        mappedRating = nil
+                    }
+                    if let mappedRating {
+                        let hashedUserId = AuthState.shared.userId.flatMap {
+                            telemetryHasher.hash($0)
+                        }
+                        AnalyticsManager.shared.chatTurnFeedback(
+                            ChatTurnFeedbackPayload(
+                                turnId: turnId,
+                                bridgeMode: bridgeMode,
+                                hashedUserId: hashedUserId,
+                                rating: mappedRating
+                            )
+                        )
+                    }
+                }
             }
         } catch {
             logError("Failed to rate message", error: error)
@@ -3475,6 +3643,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 messages[index].rating = nil
             }
         }
+    }
+
+    /// Bounds the telemetry-map growth — called on session switch /
+    /// clearChat so the maps don't accumulate stale turnIds indefinitely.
+    /// PR 0a state lives in-memory only; ok to discard.
+    private func clearTelemetryMaps() {
+        turnIdByMessageId.removeAll()
+        firstTokenAtMsByTurnId.removeAll()
+        stallEventCountByTurnId.removeAll()
     }
 
     // MARK: - Clear Chat
