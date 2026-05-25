@@ -694,6 +694,57 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Multiple open verbs (Codex P1, fix v9)
+
+    /// Review feedback (Codex P1 on v8): the multi-step deferral pattern
+    /// omitted `open|launch`, so a sequence of opens like
+    /// "Open Chrome. Open Safari" matched the first phrase, fast-pathed
+    /// to Chrome, and silently dropped the Safari open. Sequences with
+    /// multiple targets must defer so the agent can deliver every step.
+    func testDirectDesktopActionDefersOnTwoSequentialOpens() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome. Open Safari"
+            ),
+            "two open commands is a sequence the fast path can't deliver"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnOpenAppPlusOpenUrl() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Finder, open https://example.com"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnLaunchPlusOpen() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Launch Finder then open Chrome"
+            )
+        )
+    }
+
+    func testDirectDesktopActionStillFastPathsSingleOpenWithNoSequel() {
+        // Sanity check: a single open without another open verb still
+        // fast-paths. The primary matched span is excluded from the
+        // scan so it doesn't self-trip the new `open|launch` deferral.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://example.dev/path in Safari"
+            ),
+            .openURL(
+                url: URL(string: "https://example.dev/path")!,
+                browserName: "Safari"
+            )
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal

@@ -131,12 +131,14 @@ enum ProactiveTaskExecute {
         #")\b"#
 
     /// Multi-step deferral pattern (fast-path → LLM fallback). Triggers on:
-    /// - a coordinating conjunction (`and|then|also`) followed by content, or
+    /// - a coordinating conjunction (`and|then|also`), or
     /// - any secondary action verb that suggests more work after the open.
     /// Kept as a single alternation regex so the check is one pass.
-    /// `open` is intentionally excluded — we already matched it as the
-    /// primary verb; including it would defer "Open Chrome please open
-    /// quickly" (rare, but unambiguously single-action).
+    /// `open|launch` are intentionally NOT in this list — a title that
+    /// labels the task ("Open page") naturally repeats the primary verb
+    /// in the message ("Open https://…") without it being multi-step.
+    /// The "multiple distinct open commands" case is handled separately
+    /// by counting regex matches.
     private static let multiStepPattern =
         #"\b(?:and|then|also|"# +
         #"send|reply|respond|message|text|email|ping|dm|"# +
@@ -184,11 +186,48 @@ enum ProactiveTaskExecute {
         let urlPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(https?://\S+)"#
         let opts: NSRegularExpression.Options = [.caseInsensitive]
 
-        let appMatch = (try? NSRegularExpression(pattern: appPattern, options: opts))?
-            .firstMatch(in: intentText, range: fullRange)
-        let urlMatch = (try? NSRegularExpression(pattern: urlPattern, options: opts))?
-            .firstMatch(in: intentText, range: fullRange)
+        let appMatches = (try? NSRegularExpression(pattern: appPattern, options: opts))?
+            .matches(in: intentText, range: fullRange) ?? []
+        let urlMatches = (try? NSRegularExpression(pattern: urlPattern, options: opts))?
+            .matches(in: intentText, range: fullRange) ?? []
+        let appMatch = appMatches.first
+        let urlMatch = urlMatches.first
         guard appMatch != nil || urlMatch != nil else { return nil }
+
+        // Multiple distinct open targets — "Open Chrome. Open Safari",
+        // "Open Finder, open https://...", etc. The fast path can only
+        // deliver one open per pill; defer to the agent path so every
+        // requested target is honored.
+        //
+        // We compare *targets*, not raw match counts: a notification
+        // whose `title="Open Safari"` and `message="Launch Safari
+        // please"` matches twice but resolves to the same target
+        // ({safari}) and is unambiguously single-action. Counting
+        // matches naïvely deferred those legitimate single-intent
+        // cases.
+        let uniqueAppTargets: Set<String> = Set(
+            appMatches.compactMap { match -> String? in
+                guard
+                    let captureRange = Range(match.range(at: 1), in: intentText)
+                else { return nil }
+                let raw = String(intentText[captureRange]).lowercased()
+                switch raw {
+                case "google chrome", "chrome": return "google chrome"
+                default: return raw
+                }
+            }
+        )
+        let uniqueUrls: Set<String> = Set(
+            urlMatches.compactMap { match -> String? in
+                guard
+                    let captureRange = Range(match.range(at: 1), in: intentText)
+                else { return nil }
+                return String(intentText[captureRange])
+            }
+        )
+        if uniqueAppTargets.count + uniqueUrls.count > 1 {
+            return nil
+        }
 
         // Multi-step guard. If the user's imperative chains more work after
         // the open phrase — e.g. "Open Chrome and send Daniel the summary",
