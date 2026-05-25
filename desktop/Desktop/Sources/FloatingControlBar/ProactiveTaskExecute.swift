@@ -110,6 +110,26 @@ enum ProactiveTaskExecute {
         case openURL(url: URL, browserName: String?)
     }
 
+    /// Multi-step deferral pattern (fast-path → LLM fallback). Triggers on:
+    /// - a coordinating conjunction (`and|then|also`) followed by content, or
+    /// - any secondary action verb that suggests more work after the open.
+    /// Kept as a single alternation regex so the check is one pass.
+    /// `open` is intentionally excluded — we already matched it as the
+    /// primary verb; including it would defer "Open Chrome please open
+    /// quickly" (rare, but unambiguously single-action).
+    private static let multiStepPattern =
+        #"\b(?:and|then|also|"# +
+        #"send|reply|respond|message|text|email|ping|dm|"# +
+        #"create|make|build|generate|draft|compose|write|"# +
+        #"schedule|book|plan|"# +
+        #"post|publish|share|"# +
+        #"remove|delete|"# +
+        #"update|change|edit|modify|set|add|"# +
+        #"remind|notify|"# +
+        #"buy|order|purchase|"# +
+        #"save|download|upload"# +
+        #")\b"#
+
     /// Inspect a notification's user-meaningful imperative for a
     /// high-confidence "open X" intent. Returns nil whenever in doubt — the
     /// agent path is always the fallback, so a missed match merely degrades
@@ -151,22 +171,34 @@ enum ProactiveTaskExecute {
         guard appMatch != nil || urlMatch != nil else { return nil }
 
         // Multi-step guard. If the user's imperative chains more work after
-        // the open phrase — e.g. "Open Chrome and send Daniel the summary"
-        // or "Launch Safari then check email" — defer to the agent path so
-        // that downstream work isn't silently dropped. We check only the
-        // text *after* the matched open phrase so coordinating conjunctions
-        // inside the matched URL (e.g. ".../path/and/more") don't false-trip.
+        // the open phrase — e.g. "Open Chrome and send Daniel the summary",
+        // "Launch Safari then check email", or just "Open Chrome" + "Send
+        // Daniel ..." in separate title/message fields with no conjunction
+        // at all — defer to the agent path so downstream work isn't
+        // silently dropped. Two signals trigger deferral:
+        //
+        // 1. A coordinating conjunction (`and|then|also`) followed by
+        //    content. Catches "Open Chrome and Safari" where the trailing
+        //    target isn't a recognized action verb.
+        // 2. Any *secondary action verb* in the text after the matched open
+        //    phrase. Catches sentence-break and title/message-split
+        //    multi-step cases like "Open Chrome. Send Daniel ..." that
+        //    have no leading conjunction.
+        //
+        // Both checks are scoped to text *after* the matched open phrase
+        // so a URL whose path contains the literal "and" or "send" (e.g.
+        // ".../this-and-that", "/send/") doesn't false-trip.
+        //
         // Conservative-by-design: a false positive (deferring something we
         // could have fast-pathed) just costs an LLM round trip; a false
-        // negative drops user-requested work.
+        // negative silently drops user-requested work.
         let matchEndUTF16: Int = {
-            if let m = appMatch { return NSMaxRange(m.range) }
-            if let m = urlMatch { return NSMaxRange(m.range) }
+            if let appMatch { return NSMaxRange(appMatch.range) }
+            if let urlMatch { return NSMaxRange(urlMatch.range) }
             return (intentText as NSString).length
         }()
         let afterText = (intentText as NSString)
             .substring(from: matchEndUTF16)
-        let multiStepPattern = #"\b(and|then|also)\b\s+\S"#
         if afterText.range(
             of: multiStepPattern,
             options: [.regularExpression, .caseInsensitive]
@@ -212,21 +244,8 @@ enum ProactiveTaskExecute {
         // (if also present) just picks the browser via `browserName`.
         // URL is captured from the original intent text (not lowercased),
         // so case-sensitive paths and signed tokens survive intact.
-        //
-        // The `\S+` capture greedily includes terminal punctuation when a
-        // URL ends a sentence ("Open https://react.dev/learn."). Strip a
-        // small set of common closing characters off the tail before
-        // building the URL so we don't request the wrong path.
         if let urlMatch, let urlRange = Range(urlMatch.range(at: 1), in: intentText) {
-            var urlString = String(intentText[urlRange])
-            let trailingPunctuation: Set<Character> = [
-                ".", ",", ";", "!", "?", ":",
-                ")", "]", "}",
-                "\"", "'",
-            ]
-            while let last = urlString.last, trailingPunctuation.contains(last) {
-                urlString.removeLast()
-            }
+            let urlString = trimTrailingNoise(from: String(intentText[urlRange]))
             if let url = URL(string: urlString) {
                 return .openURL(url: url, browserName: browserName)
             }
@@ -296,6 +315,38 @@ enum ProactiveTaskExecute {
     static func completionActivityText(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Done" : trimmed
+    }
+
+    /// Trim trailing sentence-noise off a captured URL. The capture is
+    /// `\S+`, which greedily includes any closing characters at the end
+    /// of the surrounding sentence — but those characters are sometimes
+    /// part of the URL (Wikipedia disambig paths end in `)`, regex docs
+    /// use `]`). Strip unambiguous sentence punctuation always, and
+    /// strip closing brackets only when they're *unmatched* (i.e. there
+    /// are more closes than opens in the URL).
+    private static func trimTrailingNoise(from rawURL: String) -> String {
+        var url = rawURL
+        // Unambiguous sentence terminators that never appear at the end
+        // of a real URL.
+        let always: Set<Character> = [".", ",", ";", "!", "?", ":", "\"", "'"]
+        while let last = url.last, always.contains(last) {
+            url.removeLast()
+        }
+        // Closing brackets — strip only if the URL has more closes than
+        // opens of that bracket type. Wikipedia URLs like
+        // `/wiki/Foo_(bar)` are balanced and must survive.
+        for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+            while url.hasSuffix(close) {
+                let opens = url.filter { String($0) == open }.count
+                let closes = url.filter { String($0) == close }.count
+                if closes > opens {
+                    url.removeLast()
+                } else {
+                    break
+                }
+            }
+        }
+        return url
     }
 
     /// Sprint 3 / P8 — programmatic verification follow-up. Fired on the same

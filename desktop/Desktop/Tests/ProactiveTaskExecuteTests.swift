@@ -409,6 +409,130 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Multi-step deferral without conjunction (Codex P1, fix v5)
+
+    /// Review feedback (Codex P1, v4 follow-up): the conjunction-only
+    /// guard missed cases where the secondary work isn't introduced by
+    /// `and|then|also`. Example: title="Open Chrome", message="Send
+    /// Daniel the summary" — no conjunction, but unambiguously two
+    /// steps. The post-match scan must also look for any action verb
+    /// that suggests additional work, not just conjunctions.
+    func testDirectDesktopActionDefersOnSecondaryActionVerbNoConjunction() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Chrome",
+                message: "Send Daniel the standup summary"
+            ),
+            "an action verb after the matched open phrase must defer, even without a conjunction"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnSentenceBreakSecondaryVerb() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Finder. Reply to Sarah."
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnPostMatchScheduleVerb() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome to schedule the design review"
+            )
+        )
+    }
+
+    func testDirectDesktopActionStillFastPathsResearchVerbAfterMatch() {
+        // "find", "look up" etc. are research verbs — not in our
+        // secondary-action set. They shouldn't cause deferral; the LLM
+        // wouldn't make a write side effect for them anyway.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Finder",
+                message: "Open Finder to find the budget doc"
+            ),
+            .openApplication(name: "Finder")
+        )
+    }
+
+    func testDirectDesktopActionStillFastPathsBareUrlInMessage() {
+        // No secondary verbs, no conjunctions — the URL is the entire
+        // imperative. Fast-path must still fire.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open",
+                message: "https://example.com"
+            ),
+            .openURL(url: URL(string: "https://example.com")!, browserName: nil)
+        )
+    }
+
+    // MARK: - Matched-parenthesis URL preservation (Codex P2, fix v5)
+
+    /// Review feedback (Codex P2, v4 follow-up): the v4 trailing-strip
+    /// always removed `)`, breaking real URLs whose path ends in `)` —
+    /// Wikipedia disambiguation pages being the canonical example.
+    /// Closing brackets must only be stripped when they're *unmatched*.
+    func testDirectDesktopActionPreservesBalancedWikipediaParens() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://en.wikipedia.org/wiki/Foo_(disambiguation)"
+            ),
+            .openURL(
+                url: URL(string: "https://en.wikipedia.org/wiki/Foo_(disambiguation)")!,
+                browserName: nil
+            )
+        )
+    }
+
+    func testDirectDesktopActionStripsTrailingPeriodAfterBalancedParens() {
+        // Sentence period after a valid balanced-paren URL must still be
+        // stripped, but the paren must survive.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://en.wikipedia.org/wiki/Foo_(bar)."
+            ),
+            .openURL(
+                url: URL(string: "https://en.wikipedia.org/wiki/Foo_(bar)")!,
+                browserName: nil
+            )
+        )
+    }
+
+    func testDirectDesktopActionStripsExtraUnmatchedClosingParen() {
+        // The URL has one balanced (..) pair plus one extra ) from a
+        // wrapping parenthetical in the prose. Strip the unmatched
+        // outer one; keep the inner balanced pair.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://en.wikipedia.org/wiki/Foo_(bar))"
+            ),
+            .openURL(
+                url: URL(string: "https://en.wikipedia.org/wiki/Foo_(bar)")!,
+                browserName: nil
+            )
+        )
+    }
+
+    func testDirectDesktopActionPreservesBalancedBracketsInUrl() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open",
+                message: "Open https://example.com/path[abc]"
+            ),
+            .openURL(
+                url: URL(string: "https://example.com/path[abc]")!,
+                browserName: nil
+            )
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal
