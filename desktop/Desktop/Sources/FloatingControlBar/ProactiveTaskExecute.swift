@@ -343,9 +343,16 @@ enum ProactiveTaskExecute {
     /// are more closes than opens in the URL).
     private static func trimTrailingNoise(from rawURL: String) -> String {
         var url = rawURL
-        // Unambiguous sentence terminators that never appear at the end
-        // of a real URL.
-        let always: Set<Character> = [".", ",", ";", "!", "?", ":", "\"", "'"]
+        // Strip-always set is intentionally narrow: only characters that
+        // are extremely uncommon at the end of a real URL but very
+        // common as sentence punctuation. `:`, `;`, `'` were considered
+        // and rejected — they're valid URL syntax (port / scheme
+        // delimiter, matrix params, RFC 3986 sub-delim) and legitimately
+        // appear at the end of paths like `/mailto:`, `/topic;v=1`. The
+        // cost of NOT stripping a sentence-final `:` is a malformed URL
+        // request the OS rejects; the cost of stripping a *valid* `:`
+        // is opening the wrong resource. Choose correctness over noise.
+        let always: Set<Character> = [".", ",", "!", "?", "\""]
         while let last = url.last, always.contains(last) {
             url.removeLast()
         }

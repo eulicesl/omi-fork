@@ -574,6 +574,48 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Preserve valid trailing URL syntax (Codex P2, fix v7)
+
+    /// Review feedback (Codex P2 on v6): `:`, `;`, `'` are valid URL
+    /// characters and were being stripped unconditionally. Trailing
+    /// `:` appears in URLs ending with `/mailto:` or in port/scheme
+    /// delimiter contexts; trailing `;` shows up in matrix-param
+    /// paths; `'` is RFC 3986 sub-delim and can appear in path/query.
+    /// The strip-always set is now narrowed to characters that are
+    /// extremely uncommon at the end of real URLs (`. , ! ? "`).
+    func testDirectDesktopActionPreservesTrailingColon() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open",
+                message: "Open https://example.com/topic:"
+            ),
+            .openURL(url: URL(string: "https://example.com/topic:")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionPreservesTrailingSemicolon() {
+        // Matrix-param style path component — `;` is valid syntax.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open",
+                message: "Open https://example.com/path;v=1"
+            ),
+            .openURL(url: URL(string: "https://example.com/path;v=1")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionPreservesTrailingApostrophe() {
+        // RFC 3986 sub-delim. Rare in real URLs but valid; err on the
+        // side of correctness rather than stripping.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open",
+                message: "Open https://example.com/it's"
+            ),
+            .openURL(url: URL(string: "https://example.com/it's")!, browserName: nil)
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal
