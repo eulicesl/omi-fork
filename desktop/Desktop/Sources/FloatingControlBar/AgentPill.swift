@@ -375,6 +375,91 @@ final class AgentPillsManager: ObservableObject {
         )
     }
 
+    /// Direct-action variant of `spawnForNotification`: runs a deterministic
+    /// host-side action (e.g. `open -a "Google Chrome"`) without an LLM turn,
+    /// then surfaces a terminal pill describing what happened. Shares the
+    /// same dedup window as `spawnForNotification` so a double-click can't
+    /// launch Chrome twice — and so the second click doesn't quietly fall
+    /// back to the LLM path either.
+    ///
+    /// On a non-zero exit from `/usr/bin/open` the pill lands as `.failed`,
+    /// not `.done`, so the UI / status snapshot don't claim success for a
+    /// launch that didn't happen.
+    @discardableResult
+    func spawnDirectActionForNotification(
+        notificationId: UUID,
+        query: String,
+        model: String,
+        title: String,
+        action: ProactiveTaskExecute.DirectDesktopAction
+    ) async -> AgentPill? {
+        if recentExecuteNotificationIds.contains(notificationId) {
+            log("AgentPillsManager: ignoring duplicate Execute click for notification \(notificationId)")
+            return nil
+        }
+        recentExecuteNotificationIds.insert(notificationId)
+        let ttl = executeDedupTTL
+        DispatchQueue.main.asyncAfter(deadline: .now() + ttl) { [weak self] in
+            self?.recentExecuteNotificationIds.remove(notificationId)
+        }
+
+        let activity: String
+        let status: AgentPill.Status
+        do {
+            activity = try await ProactiveTaskExecute.perform(action)
+            status = .done
+        } catch {
+            let reason = error.localizedDescription
+            activity = "Failed: \(reason)"
+            status = .failed(reason)
+        }
+        return spawnCompletedDirectAction(
+            query: query,
+            model: model,
+            title: title,
+            activity: activity,
+            status: status
+        )
+    }
+
+    /// Create a terminal pill for deterministic host-side actions that have
+    /// already run. No ChatProvider, no agent session — we just want a
+    /// finished pill (`.done` on success, `.failed` on a non-zero exit) so
+    /// the user sees a record of what happened alongside their other Execute
+    /// history. `status` defaults to `.done` to keep the success-path call
+    /// sites short; callers that ran a process pass through the actual
+    /// outcome.
+    @discardableResult
+    func spawnCompletedDirectAction(
+        query: String,
+        model: String,
+        title: String,
+        activity: String,
+        status: AgentPill.Status = .done
+    ) -> AgentPill {
+        let pill = AgentPill(query: query, model: model, isExecuteMode: true)
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTitle.isEmpty {
+            pill.title = String(trimmedTitle.prefix(40))
+        }
+
+        if pills.count >= maxPills {
+            if let idx = pills.firstIndex(where: { isFinished($0.status) }) {
+                cleanup(pillID: pills[idx].id)
+            } else {
+                cleanup(pillID: pills[0].id)
+            }
+        }
+
+        pill.status = status
+        pill.latestActivity = ProactiveTaskExecute.completionActivityText(from: activity)
+        pill.completedAt = Date()
+        pill.attemptCount = 1
+        pill.suggestedFollowUps = AgentPillsManager.deriveFollowUps(for: pill)
+        pills.append(pill)
+        return pill
+    }
+
     /// Spawn a new agent pill. Each pill gets its own ChatProvider so the
     /// pills truly run in parallel. Bridge boots are staggered through
     /// `bootChain` so we never race ACP startup; once a pill's bridge is

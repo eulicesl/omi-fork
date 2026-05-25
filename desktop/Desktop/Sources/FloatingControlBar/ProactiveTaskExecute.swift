@@ -99,6 +99,416 @@ enum ProactiveTaskExecute {
         """
     }
 
+    // MARK: - Direct-action fast path
+
+    /// Deterministic local actions that don't need an LLM turn — opening
+    /// apps and URLs. Detected at the Execute click site so we can short
+    /// the highest-confidence intents straight to `open(1)` instead of
+    /// paying for a model round trip that can refuse.
+    enum DirectDesktopAction: Equatable, Sendable {
+        case openApplication(name: String)
+        case openURL(url: URL, browserName: String?)
+    }
+
+    /// Negation deferral pattern. If the user is telling us NOT to open
+    /// something ("Do not open Chrome", "Don't launch Safari", "Never
+    /// open Finder") the fast path would do the exact opposite of the
+    /// request. Defer to the agent path. Matches standalone negation
+    /// words ("not", "never", "cannot", "do not") and contraction
+    /// forms ending in `n't` (`don't`, `can't`, `won't`, `doesn't`,
+    /// `didn't`, `wouldn't`, `shouldn't`, `couldn't`, `isn't`, `wasn't`,
+    /// `aren't`, `weren't`, `hadn't`, `hasn't`, `haven't`, `needn't`,
+    /// `mustn't`). Curly apostrophes (`'`) are tolerated alongside
+    /// straight ones.
+    private static let negationPattern =
+        #"(?i)\b(?:not|never|cannot|do\s+not|"# +
+        #"don['’]t|doesn['’]t|didn['’]t|"# +
+        #"won['’]t|can['’]t|"# +
+        #"isn['’]t|wasn['’]t|aren['’]t|weren['’]t|"# +
+        #"wouldn['’]t|shouldn['’]t|couldn['’]t|"# +
+        #"hadn['’]t|hasn['’]t|haven['’]t|"# +
+        #"needn['’]t|mustn['’]t"# +
+        #")\b"#
+
+    /// Multi-step deferral pattern (fast-path → LLM fallback). Triggers on:
+    /// - a coordinating conjunction (`and|then|also`), or
+    /// - any secondary action verb that suggests more work after the open.
+    /// Kept as a single alternation regex so the check is one pass.
+    /// `open|launch` are intentionally NOT in this list — a title that
+    /// labels the task ("Open page") naturally repeats the primary verb
+    /// in the message ("Open https://…") without it being multi-step.
+    /// The "multiple distinct open commands" case is handled separately
+    /// by counting regex matches.
+    private static let multiStepPattern =
+        #"\b(?:and|then|also|"# +
+        #"send|reply|respond|message|text|email|ping|dm|"# +
+        #"create|make|build|generate|draft|compose|write|"# +
+        #"schedule|book|plan|"# +
+        #"post|publish|share|"# +
+        #"remove|delete|"# +
+        #"update|change|edit|modify|set|add|"# +
+        #"remind|notify|"# +
+        #"buy|order|purchase|"# +
+        #"save|download|upload|"# +
+        // Common follow-up imperatives flagged in PR review. Deferred
+        // because each is an unambiguous second instruction the agent
+        // path should handle, not the host-side `open(1)` call. Verbs
+        // that double as research/lookup ("find", "look", "search",
+        // "view", "get") are intentionally NOT in this set — those
+        // tend to describe a goal *within* the just-opened app and
+        // fast-path is acceptable.
+        #"check|read|close|call|"# +
+        #"play|pause|stop|start|restart|kill|quit|"# +
+        #"refresh|sync|switch|sign|log"# +
+        #")\b"#
+
+    /// Inspect a notification's user-meaningful imperative for a
+    /// high-confidence "open X" intent. Returns nil whenever in doubt — the
+    /// agent path is always the fallback, so a missed match merely degrades
+    /// to today's behavior. A false positive would surprise the user, so
+    /// the matcher only fires when the verbs *and* targets are unambiguous.
+    ///
+    /// Scope note: we deliberately ignore `FloatingBarNotificationContext`
+    /// (`sourceApp`, `windowTitle`, `reasoning`, `detail`, …) — those are
+    /// observational, not the user's stated intent. Including them led to
+    /// false positives like "Summarize the tabs I have **open** in
+    /// **Chrome**" hijacking the fast path. The `title` and `message` carry
+    /// the imperative; nothing else.
+    static func directDesktopAction(
+        title: String,
+        message: String
+    ) -> DirectDesktopAction? {
+        let intentText = (title + " " + message)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullRange = NSRange(location: 0, length: (intentText as NSString).length)
+
+        // Strict adjacency guard. The verb ("open"/"launch") must sit next
+        // to a recognized target, separated only by a small filler word
+        // ("up", "the", "a"). Rejects descriptive uses like
+        // "tabs I have open in Chrome" or "the launch I'm planning" —
+        // those have "open"/"launch" in the text but not as an imperative
+        // adjacent to a known target.
+        //
+        // Patterns match case-insensitively against the *original* intent
+        // text so URL capture preserves the original case — critical for
+        // case-sensitive paths, query params, and signed tokens.
+        let appPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(google chrome|chrome|safari|finder|react docs)\b"#
+        let urlPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(https?://\S+)"#
+        let opts: NSRegularExpression.Options = [.caseInsensitive]
+
+        let appMatches = (try? NSRegularExpression(pattern: appPattern, options: opts))?
+            .matches(in: intentText, range: fullRange) ?? []
+        let urlMatches = (try? NSRegularExpression(pattern: urlPattern, options: opts))?
+            .matches(in: intentText, range: fullRange) ?? []
+        let appMatch = appMatches.first
+        let urlMatch = urlMatches.first
+        guard appMatch != nil || urlMatch != nil else { return nil }
+
+        // Multiple distinct open targets — "Open Chrome. Open Safari",
+        // "Open Finder, open https://...", etc. The fast path can only
+        // deliver one open per pill; defer to the agent path so every
+        // requested target is honored.
+        //
+        // We compare *targets*, not raw match counts: a notification
+        // whose `title="Open Safari"` and `message="Launch Safari
+        // please"` matches twice but resolves to the same target
+        // ({safari}) and is unambiguously single-action. Counting
+        // matches naïvely deferred those legitimate single-intent
+        // cases.
+        let uniqueAppTargets: Set<String> = Set(
+            appMatches.compactMap { match -> String? in
+                guard
+                    let captureRange = Range(match.range(at: 1), in: intentText)
+                else { return nil }
+                let raw = String(intentText[captureRange]).lowercased()
+                switch raw {
+                case "google chrome", "chrome": return "google chrome"
+                default: return raw
+                }
+            }
+        )
+        let uniqueUrls: Set<String> = Set(
+            urlMatches.compactMap { match -> String? in
+                guard
+                    let captureRange = Range(match.range(at: 1), in: intentText)
+                else { return nil }
+                return String(intentText[captureRange])
+            }
+        )
+
+        // Two or more distinct app targets — clearly multi-step
+        // ("Open Chrome and Safari" wants both Chrome and Safari).
+        if uniqueAppTargets.count > 1 { return nil }
+        // Two or more distinct URLs — also multi-step.
+        if uniqueUrls.count > 1 { return nil }
+        // App + URL — defer UNLESS the app is a browser, in which case
+        // "Open Chrome" + "Open https://x in Chrome" collapses to the
+        // single deterministic action `open -a Chrome https://x`. The
+        // URL routing below picks up `browserName` from the app-phrase
+        // capture or the "in <browser>" suffix and emits the combined
+        // `.openURL(url, browserName)` action.
+        if !uniqueAppTargets.isEmpty && !uniqueUrls.isEmpty {
+            let appTarget = uniqueAppTargets.first ?? ""
+            let isBrowser = appTarget == "google chrome" || appTarget == "safari"
+            if !isBrowser { return nil }
+        }
+
+        // Multi-step guard. If the user's imperative chains more work after
+        // the open phrase — e.g. "Open Chrome and send Daniel the summary",
+        // "Launch Safari then check email", or just "Open Chrome" + "Send
+        // Daniel ..." in separate title/message fields with no conjunction
+        // at all — defer to the agent path so downstream work isn't
+        // silently dropped. Two signals trigger deferral:
+        //
+        // 1. A coordinating conjunction (`and|then|also`) followed by
+        //    content. Catches "Open Chrome and Safari" where the trailing
+        //    target isn't a recognized action verb.
+        // 2. Any *secondary action verb* in the text after the matched open
+        //    phrase. Catches sentence-break and title/message-split
+        //    multi-step cases like "Open Chrome. Send Daniel ..." that
+        //    have no leading conjunction. Both BEFORE and AFTER the match
+        //    are scanned, so an intent like `title: "Send Daniel the
+        //    summary"` + `message: "Open Chrome"` (no conjunction, work
+        //    appears *before* the open phrase) also defers.
+        //
+        // The scan excludes EVERY matched span — app match AND URL match
+        // when both are present — so URL path tokens like
+        // `/this-and-that` or `/send/` can't false-trip the deferral
+        // when paired with a browser-app match like "Open Chrome".
+        //
+        // Conservative-by-design: a false positive (deferring something we
+        // could have fast-pathed) just costs an LLM round trip; a false
+        // negative silently drops user-requested work.
+        let scanText = redactedScanText(
+            from: intentText,
+            excluding: (appMatches + urlMatches).map { $0.range }
+        )
+        if scanText.range(
+            of: multiStepPattern,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return nil
+        }
+        // Negation guard. "Do not open Chrome" / "Don't launch Safari"
+        // must defer — the fast path would otherwise do the exact
+        // opposite of the user's stated intent. Scope to scanText (the
+        // text outside the matched verb-target span) so a URL whose
+        // path or query happens to contain a token like "cannot" doesn't
+        // false-trip. Conservative-by-design: a false positive defers
+        // an open we could have run; a false negative opens an app
+        // against the user's explicit instruction.
+        if scanText.range(
+            of: negationPattern,
+            options: [.regularExpression]
+        ) != nil {
+            return nil
+        }
+
+        // Browser inference, two-source rule. We only set `browserName`
+        // when the user *explicitly* named a browser; otherwise we let
+        // open(1) fall back to the system default. Two signals count:
+        //
+        // 1. The app-phrase regex captured "chrome"/"safari" — the user
+        //    wrote "Open Chrome" or "Launch Safari" directly.
+        // 2. The intent contains an "in <Browser>" suffix — anchored by
+        //    `\bin\s+` so it can't match inside hostnames like
+        //    `developer.chrome.com` or `safari-extensions.example.com`.
+        //
+        // Substring scans like `lower.contains("chrome")` are wrong here:
+        // they hijack any URL whose host happens to mention a browser.
+        var browserName: String?
+        if let appMatch,
+           let captureRange = Range(appMatch.range(at: 1), in: intentText) {
+            switch String(intentText[captureRange]).lowercased() {
+            case "google chrome", "chrome":
+                browserName = "Google Chrome"
+            case "safari":
+                browserName = "Safari"
+            default:
+                break
+            }
+        }
+        if browserName == nil {
+            let chromeSuffix = #"\bin\s+(?:google\s+)?chrome\b"#
+            let safariSuffix = #"\bin\s+safari\b"#
+            if intentText.range(of: chromeSuffix, options: [.regularExpression, .caseInsensitive]) != nil {
+                browserName = "Google Chrome"
+            } else if intentText.range(of: safariSuffix, options: [.regularExpression, .caseInsensitive]) != nil {
+                browserName = "Safari"
+            }
+        }
+
+        // "open <URL>" — primary target is the URL itself; the app phrase
+        // (if also present) just picks the browser via `browserName`.
+        // URL is captured from the original intent text (not lowercased),
+        // so case-sensitive paths and signed tokens survive intact.
+        if let urlMatch, let urlRange = Range(urlMatch.range(at: 1), in: intentText) {
+            let urlString = trimTrailingNoise(from: String(intentText[urlRange]))
+            if let url = URL(string: urlString) {
+                return .openURL(url: url, browserName: browserName)
+            }
+        }
+
+        // Otherwise the user explicitly named an app. Route by the exact
+        // target the regex captured, so an incidental link in the body
+        // never overrides an explicit app open.
+        if let appMatch, let targetRange = Range(appMatch.range(at: 1), in: intentText) {
+            switch String(intentText[targetRange]).lowercased() {
+            case "google chrome", "chrome":
+                return .openApplication(name: "Google Chrome")
+            case "safari":
+                return .openApplication(name: "Safari")
+            case "finder":
+                return .openApplication(name: "Finder")
+            case "react docs":
+                return .openURL(url: URL(string: "https://react.dev")!, browserName: browserName)
+            default:
+                return nil
+            }
+        }
+        return nil
+    }
+
+    /// Execute a direct desktop action via `/usr/bin/open`. Returns a
+    /// short human-readable summary suitable for the pill's
+    /// `latestActivity`. Throws on non-zero exit so the caller can
+    /// surface the failure.
+    ///
+    /// The subprocess (`process.run()` + `process.waitUntilExit()`) is
+    /// run inside `Task.detached` so callers on `@MainActor` (the
+    /// floating-bar button, the bridge dispatch) don't block the main
+    /// thread for the duration of `open(1)`. App-launch can take a
+    /// second on a cold start; stalling the UI on that is unacceptable.
+    static func perform(_ action: DirectDesktopAction) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            switch action {
+            case .openApplication(let name):
+                process.arguments = ["-a", name]
+            case .openURL(let url, let browserName):
+                if let browserName, !browserName.isEmpty {
+                    process.arguments = ["-a", browserName, url.absoluteString]
+                } else {
+                    process.arguments = [url.absoluteString]
+                }
+            }
+
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw NSError(
+                    domain: "ProactiveTaskExecute",
+                    code: Int(process.terminationStatus),
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "open exited with status \(process.terminationStatus)"
+                    ]
+                )
+            }
+
+            switch action {
+            case .openApplication(let name):
+                return "Opened \(name)."
+            case .openURL(let url, let browserName):
+                if let browserName, !browserName.isEmpty {
+                    return "Opened \(url.absoluteString) in \(browserName)."
+                }
+                return "Opened \(url.absoluteString)."
+            }
+        }.value
+    }
+
+    /// Normalize a pill's terminal activity text — trim, fall back to "Done"
+    /// when empty. Kept here so direct-action and LLM-path pills share the
+    /// same shape.
+    static func completionActivityText(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Done" : trimmed
+    }
+
+    /// Trim trailing sentence-noise off a captured URL. The capture is
+    /// `\S+`, which greedily includes any closing characters at the end
+    /// of the surrounding sentence — but those characters are sometimes
+    /// part of the URL (Wikipedia disambig paths end in `)`, regex docs
+    /// use `]`). Strip unambiguous sentence punctuation always, and
+    /// strip closing brackets only when they're *unmatched* (i.e. there
+    /// are more closes than opens in the URL).
+    /// Build a "scan text" from the intent with every matched span
+    /// redacted to a single space. Used by the multi-step / negation
+    /// guards so URL path tokens (e.g. `/this-and-that`, `/send/`) and
+    /// the matched verb phrase itself can't false-trip the scans.
+    ///
+    /// Ranges may overlap or be unsorted; both are handled.
+    private static func redactedScanText(from text: String, excluding ranges: [NSRange]) -> String {
+        let validRanges = ranges
+            .compactMap { Range($0, in: text) }
+            .sorted { $0.lowerBound < $1.lowerBound }
+        guard !validRanges.isEmpty else { return text }
+
+        var result = ""
+        var cursor = text.startIndex
+        for range in validRanges {
+            // Already past this range from a previous (overlapping) one.
+            guard range.lowerBound >= cursor else {
+                cursor = max(cursor, range.upperBound)
+                continue
+            }
+            if cursor < range.lowerBound {
+                result.append(contentsOf: text[cursor..<range.lowerBound])
+            }
+            result.append(" ")
+            cursor = range.upperBound
+        }
+        if cursor < text.endIndex {
+            result.append(contentsOf: text[cursor..<text.endIndex])
+        }
+        return result
+    }
+
+    private static func trimTrailingNoise(from rawURL: String) -> String {
+        var url = rawURL
+        // Strip-always set is intentionally narrow: only characters that
+        // are extremely uncommon at the end of a real URL but very
+        // common as sentence punctuation. `:`, `;`, `'` were considered
+        // and rejected — they're valid URL syntax (port / scheme
+        // delimiter, matrix params, RFC 3986 sub-delim) and legitimately
+        // appear at the end of paths like `/mailto:`, `/topic;v=1`. The
+        // cost of NOT stripping a sentence-final `:` is a malformed URL
+        // request the OS rejects; the cost of stripping a *valid* `:`
+        // is opening the wrong resource. Choose correctness over noise.
+        let always: Set<Character> = [".", ",", "!", "?", "\""]
+        while let last = url.last, always.contains(last) {
+            url.removeLast()
+        }
+        // Closing brackets — strip only if the URL has more closes than
+        // opens of that bracket type. Wikipedia URLs like
+        // `/wiki/Foo_(bar)` are balanced and must survive.
+        //
+        // Loop until a full pass over all bracket types removes nothing,
+        // so mixed trailing wrappers like `https://example.com)]` (a `)`
+        // from prose wrapping a `]` from prose) get fully cleaned —
+        // single-pass ordering would strip the inner bracket and leave
+        // the outer one behind.
+        var changed = true
+        while changed {
+            changed = false
+            for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+                while url.hasSuffix(close) {
+                    let opens = url.filter { String($0) == open }.count
+                    let closes = url.filter { String($0) == close }.count
+                    if closes > opens {
+                        url.removeLast()
+                        changed = true
+                    } else {
+                        break
+                    }
+                }
+            }
+        }
+        return url
+    }
+
     /// Sprint 3 / P8 — programmatic verification follow-up. Fired on the same
     /// warm session after the main turn returns and the local verification
     /// gate (P2) says a write tool was called. Forces the model to produce
