@@ -194,12 +194,20 @@ final class PromptSchemaConsistencyTests: XCTestCase {
     ]
 
     /// Pull `**name**:` markers out of a prompt. The marker convention
-    /// is lowercase + underscores ending with a colon. Headers like
+    /// is lowercase + underscores ending with a colon, plus digits and
+    /// hyphens for forward compat (MCP tool names like
+    /// `mcp__omi-tools__execute_sql` carry hyphens; future tool names
+    /// could legitimately include digits). Headers like
     /// `**CRITICAL — When to use tools proactively:**` are excluded
-    /// because they contain non-tool-name characters.
+    /// because they contain whitespace and uppercase.
+    ///
+    /// Broadened from `[a-z_]+` per gemini-code-assist[bot] review on
+    /// PR #28 — the original regex would silently skip a future tool
+    /// whose name contained hyphens or digits, masking the contract
+    /// drift the test is supposed to catch.
     private static func extractToolNames(from prompt: String) -> Set<String> {
         var names: Set<String> = []
-        let pattern = #"\*\*([a-z_]+)\*\*:"#
+        let pattern = #"\*\*([a-z0-9_\-]+)\*\*:"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)
         regex.enumerateMatches(in: prompt, range: range) { match, _, _ in

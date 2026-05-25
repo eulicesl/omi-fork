@@ -1231,6 +1231,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     func selectSession(_ session: ChatSession, force: Bool = false) async {
         guard force || currentSession?.id != session.id || isInDefaultChat else { return }
 
+        // PR 0a: turn-telemetry maps are conversation-scoped. Crossing
+        // a session boundary invalidates every entry — the new
+        // session's messages will be a different set of ids that
+        // never had chat.turn.* events fire against them locally.
+        clearTelemetryMaps()
+
         currentSession = session
         isInDefaultChat = false
         isLoading = true
@@ -3203,6 +3209,18 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                                     self?.messages[syncIndex].id = response.id
                                     self?.messages[syncIndex].isSynced = true
                                 }
+                                // PR 0a: register the server id → turnId
+                                // mapping so chat.turn.feedback fires
+                                // correctly on partially-persisted
+                                // errored/interrupted turns. The success
+                                // path does this around L2890; the
+                                // partial-save path was missing it,
+                                // which silently dropped feedback emits
+                                // for turns the user rated after an
+                                // error. Caught by
+                                // chatgpt-codex-connector[bot] review
+                                // on PR #28 (2026-05-25).
+                                self?.turnIdByMessageId[response.id] = turnId
                                 self?.pendingSaves.end()
                             }
                             log("Saved partial AI response to backend: \(response.id)")
@@ -3742,6 +3760,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         isClearing = true
         defer { isClearing = false }
 
+        // PR 0a: turnId → message-id mappings (and friends) are scoped
+        // to the current conversation; clearing the chat invalidates
+        // every entry. Without this, the maps accumulated indefinitely
+        // and stale ids could collide with new turns on rare
+        // local-UUID reuse. Bug surfaced by chatgpt-codex-connector[bot]
+        // review on PR #28 (2026-05-25) flagging that
+        // clearTelemetryMaps() was never called anywhere.
+        clearTelemetryMaps()
+
         if isInDefaultChat {
             // Default chat mode: clear UI immediately, delete in background
             messages = []
@@ -3789,6 +3816,10 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     /// Select a chat app and load its sessions
     func selectApp(_ appId: String?) async {
         guard selectedAppId != appId else { return }
+        // PR 0a: app switch crosses a conversation boundary; flush
+        // the turn-telemetry maps so they don't accumulate across
+        // every app the user toggles between.
+        clearTelemetryMaps()
         selectedAppId = appId
         currentSession = nil
         messages = []
