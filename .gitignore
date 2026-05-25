@@ -232,7 +232,11 @@ AGENTS.md
 # Local-only agent memory dump
 openmemory.md
 
-# Execute eval — local-only test config + run outputs + macOS metadata
+# Execute eval — local-only test config + run outputs + macOS metadata.
+# Ad-hoc developer runs land in results/<timestamp>.jsonl and stay ignored;
+# milestone baselines we want versioned go into results/baselines/ which is
+# tracked (the leading `!` un-ignores it).
 desktop/e2e/execute-eval/tasks.local.json
 desktop/e2e/execute-eval/results/
+!desktop/e2e/execute-eval/results/baselines/
 desktop/e2e/execute-eval/**/.DS_Store
