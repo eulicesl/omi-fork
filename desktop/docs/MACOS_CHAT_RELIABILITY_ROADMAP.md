@@ -68,8 +68,13 @@ PR 0a owns this. Every later PR must comply.
 - Tool names from a fixed allow-list of the 7 in `ChatPrompts.swift:474-509`
 - Error class enums
 - Hashed user id (see "User-id hashing" below)
-- `dev_bundle` (boolean)
-- `bundle_id`, `app_name`, `git_sha`, `branch`, `environment`
+- `build_dev_bundle` (boolean) — uses the `build_` prefix to match
+  the existing PostHog domain-prefix convention (`chat_*`,
+  `floating_*`, `memory_*`, `advice_*`) and describe what these are
+  (build metadata)
+- `build_bundle_id`, `build_app_name`, `build_git_sha`, `build_branch`, `build_environment`
+  — note `build_app_name` deliberately doesn't collide with the
+  existing bare `app_name` property (which is set elsewhere)
 
 **Forbidden in any event, ever:**
 - Raw user prompts or any prefix/suffix
@@ -101,6 +106,15 @@ Each event is a dedicated Swift `struct`. Examples for V1:
 
 - Algorithm: **HMAC-SHA256**.
 - Salt: **long-lived per-environment secret** stored outside the repo (CI secret + dev `.env.local`, never committed).
+- Env var name: **`OMI_TELEMETRY_HMAC_SALT`** (locked).
+- Dev/local fallback: when the env var is unset, use the literal
+  string `dev-local-salt-do-not-use-in-prod`. Log a warning at
+  startup so missing prod configuration is loud. The warning ALSO
+  fires when the env var IS set but its value equals the dev-local
+  literal — catches a bad copy-paste of the fallback into a real
+  prod env config at startup, not after data has been hashed. PR 0a's
+  redaction tests assert the prod salt is **not** that literal
+  string.
 - The secret is never logged anywhere, including crash reports.
 - Rotated only on compromise — rotation breaks longitudinal cohort tracking, so it is not routine maintenance.
 
@@ -110,17 +124,31 @@ Two layers; **both** are required.
 
 **Client-side tagging (every event from the named bundle):**
 ```
-dev_bundle = true
-bundle_id  = com.omi.omi-chat-reliability
-app_name   = omi-chat-reliability
-git_sha    = <current commit>
-branch     = feature/macos-chat-reliability-80
-environment = "named-bundle-dev"
+build_dev_bundle  = true
+build_bundle_id   = com.omi.omi-chat-reliability
+build_app_name    = omi-chat-reliability
+build_git_sha     = <current commit>
+build_branch      = feature/macos-chat-reliability-80
+build_environment = "named-bundle-dev"
 ```
 
 **Server-side / dashboard rule (PostHog):**
-- Production reliability dashboards filter `dev_bundle = false`. This rule lives on the PostHog dashboard view, not client trust.
-- PR validation dashboards filter `dev_bundle = true AND git_sha = <PR SHA>` for per-PR canary slicing.
+- Production reliability dashboards filter `build_dev_bundle != true`
+  (NOT `= false`). HogQL treats missing ≠ false — using `= false`
+  would exclude every event predating PR 0a's emission, blanking
+  the charts. `!= true` correctly matches both "property absent"
+  (existing data) and "property explicitly false" (future
+  non-dev-bundle emits).
+- PR validation dashboards filter `build_dev_bundle = true AND build_git_sha = <PR SHA>` for per-PR canary slicing.
+- **Existing-dashboard retrofit (PR 0a acceptance gate):** none of
+  the 14 existing insights on the source-of-truth dashboard
+  (`https://us.posthog.com/project/302298/dashboard/1624254`)
+  currently filter against `build_dev_bundle` (the property doesn't
+  exist yet — PR 0a is what introduces it). PR 0a must add the
+  `build_dev_bundle != true` filter to every insight on that
+  dashboard in the same PR that ships the named-bundle telemetry
+  plumbing — otherwise dev sessions contaminate the production
+  metric the moment PR 0a starts emitting tagged events.
 
 A misconfigured client emit cannot contaminate production metrics because the dashboard rule is the gate, not the client tag.
 
@@ -166,16 +194,18 @@ PRs 2 and 6 can ship in parallel with the 0a/0b → 1 critical path.
   - `chat.turn.completed` → `ChatTurnCompletedPayload` — emitted on turn finalize (success/failure/interrupt/timeout).
   - `chat.turn.feedback` → `ChatTurnFeedbackPayload` — emitted on thumbs 👍/👎, keyed by `turnId`.
 - `ChatTurnTelemetry` collector hooked into `ChatProvider.sendMessage` (~`:2429-end`) using existing stream callbacks (`onTextDelta`, `onToolCall`, `onToolActivity` per `AgentBridge.swift:427-429`).
-- Client-side dev/prod tags on every event (`dev_bundle`, `bundle_id`, `app_name`, `git_sha`, `branch`, `environment`).
+- Client-side build-metadata tags on every event using the `build_*` prefix (`build_dev_bundle`, `build_bundle_id`, `build_app_name`, `build_git_sha`, `build_branch`, `build_environment`). See "Dev/prod telemetry separation" above for verification context.
 - `AnalyticsRedactionTests` reflects over each payload struct and rejects forbidden field names.
-- HMAC-SHA256 user-id hashing with per-env secret.
-- **Provision the dedicated chat-reliability eval Firebase account during this PR** so it is ready before PR 7. Account label: `chat_reliability_eval@…`. UID is hardcoded into the seed script delivered in PR 7. Record the UID in this doc once provisioned (see "Locked values" below).
+- HMAC-SHA256 user-id hashing with per-env secret (`OMI_TELEMETRY_HMAC_SALT`). Startup warning fires both when unset and when set-but-equals the dev-local literal — catches bad copy-paste into prod config.
+- Eval Firebase UID locked at `rg0PvY9mhKRARcYxkHHYh4iAkc12` for V1 (user's personal account, data-mixing accepted). The PR 7 seed script hardcodes this UID; before this branch upstreams to `BasedHardware/omi`, swap to a dedicated `omi-eval@…` UID.
+- **Retrofit the existing PostHog source-of-truth dashboard** (`https://us.posthog.com/project/302298/dashboard/1624254`, 14 insights) to filter `build_dev_bundle != true` on every insight. NOT `= false` — HogQL treats missing ≠ false, so `= false` would exclude every event predating PR 0a's emission and blank the charts. Must land in the same PR as the telemetry plumbing — otherwise dev-tagged events from named bundles contaminate the production metric the moment emission starts.
+- **Deprecate the bare `build` and `build_number` properties.** Audited 2026-05-25 by user: over 30 days on macOS, `build` appears on 34 events out of 7.6M (0.0004%), `build_number` on 1 event. PostHog's auto-captured `$app_build` appears on 4,975,946 events — and 100% of the events carrying `build` (34/34) also carry `$app_build` with identical values. Confirmed redundant. Remove the emit sites in this PR.
 
 **Local verification gate.**
 - Standard 5-step.
 - Drive 3 turns via `agent-swift` (good / tool-heavy / cancelled mid-stream). Capture screenshots.
-- Verify in PostHog (filtered `dev_bundle = true AND git_sha = <SHA>`) that exactly 3 `chat.turn.completed` events arrive with correct `outcome` and exactly 3 `chat.turn.started` precede them.
-- Verify the production dashboard view (`dev_bundle = false`) does **not** count any of these events.
+- Verify in PostHog (filtered `build_dev_bundle = true AND build_git_sha = <SHA>`) that exactly 3 `chat.turn.completed` events arrive with correct `outcome` and exactly 3 `chat.turn.started` precede them.
+- Verify the production dashboard view (`build_dev_bundle != true`) does **not** count any of these events.
 
 **Tests.**
 - Unit `ChatTurnTelemetryTests` — four outcomes (`.completed`, `.interrupted`, `.errored`, `.timeout`); `firstTokenMs` and `interEventGapsMs` populated; `started` always precedes `completed` for the same `turnId`.
@@ -188,7 +218,7 @@ PRs 2 and 6 can ship in parallel with the 0a/0b → 1 critical path.
 - Thumbs feedback within 24h emits matched `chat.turn.feedback` keyed on `turnId`.
 - Orphan detector: `count(started) − count(completed) ≈ 0` over a settled window.
 - Redaction tests pass; no raw text in any emitted event.
-- Production dashboard (`dev_bundle = false`) is live: `like_ratio` by `bridgeMode` × `outcome`. PR validation dashboard (`dev_bundle = true AND git_sha`) is also live.
+- Production dashboard (`build_dev_bundle != true`) is live: `like_ratio` by `bridgeMode` × `outcome`. PR validation dashboard (`build_dev_bundle = true AND build_git_sha`) is also live.
 
 **Rollback.** Feature flag `CHAT_TELEMETRY_V2` gates emit for first 24h. Pure addition; reverts cleanly.
 
@@ -520,7 +550,7 @@ Network / API failure surfaces in existing paths are folded into "Bridge unavail
 
 ## PR 9 — Sprint exit review + threshold tuning
 
-**Scope.** After at least 5 days of telemetry post-PR 8 merge, pull the production dashboard data (filtered `dev_bundle = false`) and set:
+**Scope.** After at least 5 days of telemetry post-PR 8 merge, pull the production dashboard data (filtered `build_dev_bundle != true`) and set:
 - `slowGapMs = p90(interEventGapsMs | outcome = completed)`
 - `stalledGapMs = p99(interEventGapsMs | outcome = completed)`
 - Per-`piMono`-tool timeouts at `p95(toolDurationsMs[name] | outcome = completed) × 1.5`
@@ -539,7 +569,7 @@ Network / API failure surfaces in existing paths are folded into "Bridge unavail
 V1 is done only when **all** of:
 
 1. PR 0a dashboard live for ≥7 days post-PR 8 merge.
-2. **`like_ratio` on `bridgeMode = piMono, dev_bundle = false` ≥ 75%.** Target remains 80%. **If V1 exits below 80%, V2 must include a documented "close the remaining gap" workstream as PR 10 or earlier.**
+2. **`like_ratio` on `bridgeMode = piMono, build_dev_bundle != true` ≥ 75%.** Target remains 80%. **If V1 exits below 80%, V2 must include a documented "close the remaining gap" workstream as PR 10 or earlier.**
 3. `outcome = .timeout` rate < 2% of turns.
 4. `outcome = .errored` rate < 1% of turns.
 5. Zero `chat.turn.completed` events where any tool row was still `.running` at turn end.
@@ -674,11 +704,31 @@ These are recorded here once provisioned. Do not start PR 7 until these are pres
 
 | Value | Lookup |
 |---|---|
-| Chat-reliability eval Firebase UID | TBD — provision during PR 0a |
-| PostHog production dashboard URL (filter `dev_bundle = false`) | TBD — provision during PR 0a |
-| PostHog PR validation dashboard URL (filter `dev_bundle = true AND git_sha`) | TBD — provision during PR 0a |
-| HMAC user-id salt — environment name | `OMI_DESKTOP_ANALYTICS_USERID_SALT` |
+| Chat-reliability eval Firebase UID | **`rg0PvY9mhKRARcYxkHHYh4iAkc12`** — user's personal account; data mixing accepted for V1. **Before this branch ever upstreams to `BasedHardware/omi`, swap to a dedicated `omi-eval@…` UID** — the personal UID identifies a real user and shouldn't ship in a public repo. |
+| PostHog source-of-truth dashboard | `https://us.posthog.com/project/302298/dashboard/1624254` (14 insights, retrofit `build_dev_bundle != true` filter in PR 0a — see notes below on `!=` vs `=`) |
+| PostHog production dashboard view filter | `build_dev_bundle != true` (NOT `= false` — HogQL treats missing ≠ false; `= false` would exclude every event predating PR 0a's emission) |
+| PostHog PR validation dashboard view filter | `build_dev_bundle = true AND build_git_sha = <PR SHA>` |
+| HMAC user-id salt — environment variable | **`OMI_TELEMETRY_HMAC_SALT`** |
+| HMAC salt — dev/local fallback | Literal string `dev-local-salt-do-not-use-in-prod` (warn at startup if unset OR if set-but-equals-this-literal; redaction tests assert prod doesn't use this) |
+| PostHog property prefix convention | `build_*` for build/release metadata (`build_dev_bundle`, `build_bundle_id`, `build_app_name`, `build_git_sha`, `build_branch`, `build_environment`). Verified against PostHog's actual property inventory (0 of 159 properties use `omi_*`; the existing convention is domain-prefix `chat_*`/`floating_*`/`memory_*` or bare names `app_name`/`app_version`/`build`/`build_number`). `build_app_name` deliberately differs from the existing bare `app_name` to avoid collision. Note: bare `build` (9 events / 7 days) and `build_number` (1 event / 7 days) coexist with the `build_*` prefix without technical collision — distinguishable property names — but PR 0a investigates whether either is vestigial (likely redundant with PostHog's auto-captured `$app_build`) and deprecates if so. |
 | Heartbeat interval default | 5s (tuned in PR 9) |
 | Bridge-unresponsive threshold default | 12s (tuned in PR 9) |
 | `slowGapMs` default | 8000 (tuned in PR 9) |
 | `stalledGapMs` default | 20000 (tuned in PR 9) |
+
+**Embedded individual insights (for reference; all are tiles on the source-of-truth dashboard above):**
+
+- [KPI] Weekly thumbs_up/down/% positive — `https://us.posthog.com/project/302298/insights/Gp54lX8e`
+- [KPI] 28d rolling % positive — `https://us.posthog.com/project/302298/insights/x82ya40I`
+- [KPI] 28d rolling % positive (clean) — `https://us.posthog.com/project/302298/insights/5BZ9xiaI`
+- [Scoreboard] Last 14d vs Prior 14d — `https://us.posthog.com/project/302298/insights/cWl5O56I`
+- [Release] Daily % positive (60d tracker) — `https://us.posthog.com/project/302298/insights/t2JTkmjK`
+- [Validation] thumbs_up vs thumbs_down daily counts — `https://us.posthog.com/project/302298/insights/KkgTTmI2`
+- [Diagnostic] ratio by app version — `https://us.posthog.com/project/302298/insights/pRG3hruC`
+- [Reliability] chat_agent_error rate — `https://us.posthog.com/project/302298/insights/LXEMscAj`
+- [Reliability] PTT completion rate — `https://us.posthog.com/project/302298/insights/5l2a83hh`
+- [Reliability] tool-call/agent-query/error volume — `https://us.posthog.com/project/302298/insights/O7I9Iljr`
+- [Cohort] new-user % positive in first 7 days — `https://us.posthog.com/project/302298/insights/sHSaDIN6`
+- [Pending] Chat Unavailable Shown (placeholder) — `https://us.posthog.com/project/302298/insights/J38pgyjd`
+- [Pending] Chat Scroll Stuck Detected (placeholder) — `https://us.posthog.com/project/302298/insights/TQbRGiCG`
+- [Pending] tool-call/agent-query START events (placeholder) — `https://us.posthog.com/project/302298/insights/mJZBso3r`
