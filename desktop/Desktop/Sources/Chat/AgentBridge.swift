@@ -612,10 +612,28 @@ actor AgentBridge {
   // MARK: - Streaming Input Controls
 
   /// Interrupt the running agent, keeping partial response.
+  ///
+  /// PR 3: if a `waitForMessage()` continuation is pending when interrupt
+  /// fires (typical when the user cancels mid-tool-execution), resume it
+  /// with `BridgeError.stopped` so `query()`'s for-await-in unwinds
+  /// promptly. Without this, an interrupt during tool execution leaves
+  /// `query()` parked indefinitely waiting on bridge events that never
+  /// arrive — verified during PR 0a runtime validation when Turn 3a/3b
+  /// interrupts produced no `chat.turn.completed` event despite the
+  /// user clicking Cancel (orphan-turn signal in PostHog telemetry).
+  ///
+  /// Sending the JSON interrupt to the bridge first ensures the bridge
+  /// receives the cancel signal even if it's currently still able to
+  /// emit messages (e.g. mid-stream). Resuming the continuation second
+  /// ensures the Swift side closes cleanly even if the bridge doesn't.
   func interrupt() {
     guard isRunning else { return }
     isInterrupted = true
     sendLine("{\"type\":\"interrupt\"}")
+    if let continuation = messageContinuation {
+      messageContinuation = nil
+      continuation.resume(throwing: BridgeError.stopped)
+    }
   }
 
   /// Push a refreshed Firebase ID token to the bridge (piMono mode only).

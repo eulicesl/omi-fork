@@ -77,6 +77,14 @@ unset TOOLCHAINS
 SCRIPT_START_TIME=$(date +%s.%N)
 STEP_START_TIME=$SCRIPT_START_TIME
 
+# Capture git metadata ONCE at script start so the injected BuildGitSha
+# / BuildGitBranch reflect the state when the build was triggered, not
+# whatever drifts into the working tree during a long build. Empty
+# strings on failure (detached HEAD, no git repo, etc.) — the Swift
+# BuildMetadataTags reader falls back to "unknown" if either is empty.
+BUILD_GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+BUILD_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+
 step() {
     local now=$(date +%s.%N)
     local step_elapsed=$(echo "$now - $STEP_START_TIME" | bc)
@@ -439,6 +447,18 @@ cp -f Desktop/Info.plist "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 $URL_SCHEME" "$APP_BUNDLE/Contents/Info.plist"
+
+# Inject BuildGitSha / BuildGitBranch (captured at script start above) so
+# the Swift BuildMetadataTags reader picks up real values instead of
+# falling back to "unknown". Must happen BEFORE codesign — modifying the
+# Info.plist after signing would invalidate the codesign signature.
+# Add-or-Set pattern: try Add first (succeeds on a fresh plist), fall
+# back to Set if the key already exists.
+substep "Injecting BuildGitSha=${BUILD_GIT_SHA:0:8} BuildGitBranch=${BUILD_GIT_BRANCH:-<none>}"
+/usr/libexec/PlistBuddy -c "Add :BuildGitSha string $BUILD_GIT_SHA" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :BuildGitSha $BUILD_GIT_SHA" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :BuildGitBranch string $BUILD_GIT_BRANCH" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :BuildGitBranch $BUILD_GIT_BRANCH" "$APP_BUNDLE/Contents/Info.plist"
 
 auth_debug "AFTER plist edits: auth_isSignedIn=$(defaults read "$BUNDLE_ID" auth_isSignedIn 2>&1 || true)"
 

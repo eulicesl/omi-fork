@@ -3140,7 +3140,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                     messages.remove(at: index)
                 } else {
                     messages[index].isStreaming = false
-                    completeRemainingToolCalls(messageId: aiMessageId)
+                    // PR 3: mark in-flight tools as .failed (not .completed)
+                    // on the error path. Visually distinguishes
+                    // cancelled / timed-out / errored tools from tools
+                    // that finished normally — the red xmark icon
+                    // from PR 1 Commit C renders for .failed blocks.
+                    resolveRemainingToolCalls(messageId: aiMessageId, terminalStatus: .failed)
                     log("Bridge error after partial response — keeping \(messages[index].text.count) chars of streamed text")
                     // Still try to persist the partial response.
                     //
@@ -3474,21 +3479,34 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         }
     }
 
-    /// Mark any remaining in-flight tool call blocks as `.completed` in a message.
-    /// Called when a query finishes (success or interrupt) so spinners don't spin forever.
-    /// Matches `.running`, `.slow`, and `.stalled` (any state where `isInFlight` is true)
-    /// so detector-promoted blocks resolve when the turn ends.
-    private func completeRemainingToolCalls(messageId: String) {
+    /// Mark any remaining in-flight tool call blocks in a message with
+    /// the given terminal `status`. Called when a query finishes so
+    /// spinners don't spin forever. Matches `.running`, `.slow`, and
+    /// `.stalled` (any state where `isInFlight` is true).
+    ///
+    /// `.completed` for the success path; `.failed` for the
+    /// interrupt/timeout/error paths (PR 3) so tools the user cancelled
+    /// or that hit a timeout render visually distinct from tools that
+    /// finished normally.
+    private func resolveRemainingToolCalls(messageId: String, terminalStatus: ToolCallStatus) {
         guard let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
         for i in messages[index].contentBlocks.indices {
             if case .toolCall(let id, let name, let status, let toolUseId, let input, let output) = messages[index].contentBlocks[i],
                status.isInFlight {
                 messages[index].contentBlocks[i] = .toolCall(
-                    id: id, name: name, status: .completed,
+                    id: id, name: name, status: terminalStatus,
                     toolUseId: toolUseId, input: input, output: output
                 )
             }
         }
+    }
+
+    /// Backwards-compatible wrapper — existing success-path callers
+    /// still mark blocks `.completed`. New PR 3 catch-path callers
+    /// invoke `resolveRemainingToolCalls(_:terminalStatus:)` directly
+    /// with `.failed`.
+    private func completeRemainingToolCalls(messageId: String) {
+        resolveRemainingToolCalls(messageId: messageId, terminalStatus: .completed)
     }
 
     // MARK: - Stall detection (PR 1 Commit D)
