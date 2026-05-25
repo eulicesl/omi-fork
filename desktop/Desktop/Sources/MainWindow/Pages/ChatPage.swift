@@ -459,6 +459,7 @@ struct ChatPage: View {
       },
       sessionsLoadError: chatProvider.sessionsLoadError,
       onRetry: { Task { await chatProvider.retryLoad() } },
+      onCancelTurn: { [weak chatProvider] in chatProvider?.stopAgent() },
       welcomeContent: { welcomeMessage }
     )
   }
@@ -605,6 +606,10 @@ struct ChatBubble: View {
   let onRate: (Int?) -> Void
   var onCitationTap: ((Citation) -> Void)? = nil
   var isDuplicate: Bool = false
+  /// Fired when the user taps Cancel on a stalled-tool banner. Threaded
+  /// down to `ToolCallsGroup`. Optional so existing callers compile
+  /// without updating.
+  var onCancelTurn: (() -> Void)? = nil
 
   @State private var isHovering = false
   @State private var isTimestampHovering = false
@@ -618,13 +623,15 @@ struct ChatBubble: View {
 
   init(
     message: ChatMessage, app: OmiApp?, onRate: @escaping (Int?) -> Void,
-    onCitationTap: ((Citation) -> Void)? = nil, isDuplicate: Bool = false
+    onCitationTap: ((Citation) -> Void)? = nil, isDuplicate: Bool = false,
+    onCancelTurn: (() -> Void)? = nil
   ) {
     self.message = message
     self.app = app
     self.onRate = onRate
     self.onCitationTap = onCitationTap
     self.isDuplicate = isDuplicate
+    self.onCancelTurn = onCancelTurn
     self._cachedGroupedBlocks = State(initialValue: ContentBlockGroup.group(message.contentBlocks))
   }
 
@@ -697,7 +704,7 @@ struct ChatBubble: View {
                   .padding(.top, 2)
               }
             case .toolCalls(_, let calls):
-              ToolCallsGroup(calls: calls)
+              ToolCallsGroup(calls: calls, onCancel: onCancelTurn)
             case .thinking(_, let text):
               ThinkingBlock(text: text)
             case .discoveryCard(_, let title, let summary, let fullText):

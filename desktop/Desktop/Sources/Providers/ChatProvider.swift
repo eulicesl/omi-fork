@@ -2625,6 +2625,18 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         var sqlRowsReturned = 0
         var sqlQueryCount = 0
 
+        // PR 1 Commit D: stall detection.
+        // The detector observes every bridge event (text deltas, tool
+        // activity, etc.) and a 500ms periodic tick task surfaces stall
+        // promotions even during silent gaps. Transitions become
+        // ToolCallStatus updates on individual tool-call blocks; the
+        // banner appears via ToolCallsGroup's hasStalledTool check.
+        let turnStartMs = Int(Date().timeIntervalSince1970 * 1000)
+        let stallDetector = StallDetector(
+            thresholds: .v1Defaults,
+            startedAtMs: turnStartMs
+        )
+
         do {
             // Use the system prompt built at warmup. The agent bridge applies it only
             // at session/new; for the normal reused-session path it is ignored.
@@ -2668,10 +2680,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
 
             // Query the active bridge with streaming
-            // Callbacks for agent bridge
+            // Callbacks for agent bridge. Each event-observing handler
+            // also steps the stall detector and applies any resulting
+            // tool-status transitions to the message's content blocks.
             let textDeltaHandler: AgentBridge.TextDeltaHandler = { [weak self] delta in
+                let nowMs = Int(Date().timeIntervalSince1970 * 1000)
                 Task { @MainActor [weak self] in
                     self?.appendToMessage(id: aiMessageId, text: delta)
+                    let transitions = await stallDetector.step(kind: .other, atMs: nowMs)
+                    self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
                 }
             }
             let toolCallHandler: AgentBridge.ToolCallHandler = { callId, name, input in
@@ -2690,6 +2707,13 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 return result
             }
             let toolActivityHandler: AgentBridge.ToolActivityHandler = { [weak self] name, status, toolUseId, input in
+                let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+                // Tools without a toolUseId still get tracked under a
+                // synthetic key so the detector's per-tool timer fires.
+                let trackedId = toolUseId ?? "untracked-\(name)"
+                let detectorKind: StallDetector.EventKind = status == "started"
+                    ? .toolStarted(id: trackedId)
+                    : .toolCompleted(id: trackedId)
                 Task { @MainActor [weak self] in
                     self?.addToolActivity(
                         messageId: aiMessageId,
@@ -2729,18 +2753,43 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                         let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
                         AnalyticsManager.shared.chatToolCallCompleted(toolName: name, durationMs: durationMs)
                     }
+                    let transitions = await stallDetector.step(kind: detectorKind, atMs: nowMs)
+                    self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
                 }
             }
             let thinkingDeltaHandler: AgentBridge.ThinkingDeltaHandler = { [weak self] text in
+                let nowMs = Int(Date().timeIntervalSince1970 * 1000)
                 Task { @MainActor [weak self] in
                     self?.appendThinking(messageId: aiMessageId, text: text)
+                    let transitions = await stallDetector.step(kind: .other, atMs: nowMs)
+                    self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
                 }
             }
             let toolResultDisplayHandler: AgentBridge.ToolResultDisplayHandler = { [weak self] toolUseId, name, output in
+                let nowMs = Int(Date().timeIntervalSince1970 * 1000)
                 Task { @MainActor [weak self] in
                     self?.addToolResult(messageId: aiMessageId, toolUseId: toolUseId, name: name, output: output)
+                    let transitions = await stallDetector.step(kind: .other, atMs: nowMs)
+                    self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
                 }
             }
+
+            // PR 1 Commit D: periodic tick task surfaces stall promotions
+            // during silent gaps when no bridge events arrive. Cancelled
+            // via defer on scope exit (success or throw).
+            let stallTickTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                    if Task.isCancelled { break }
+                    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+                    let transitions = await stallDetector.tick(atMs: nowMs)
+                    if transitions.isEmpty { continue }
+                    await MainActor.run { [weak self] in
+                        self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
+                    }
+                }
+            }
+            defer { stallTickTask.cancel() }
 
             let queryResult = try await agentBridge.query(
                 prompt: trimmedText,
@@ -3231,6 +3280,47 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                     id: id, name: name, status: .completed,
                     toolUseId: toolUseId, input: input, output: output
                 )
+            }
+        }
+    }
+
+    // MARK: - Stall detection (PR 1 Commit D)
+
+    /// Map a `StallDetector.State` to the matching `ToolCallStatus`.
+    /// The two enums are deliberately separate — the detector tracks a
+    /// 3-state lifecycle independent of UI/persistence concerns.
+    private func mapDetectorState(_ state: StallDetector.State) -> ToolCallStatus {
+        switch state {
+        case .running: return .running
+        case .slow: return .slow
+        case .stalled: return .stalled
+        }
+    }
+
+    /// Apply detector transitions to the message's tool-call blocks.
+    /// Only `.tool(id:from:to:)` transitions are surfaced in the UI for
+    /// V1; `.interEvent` transitions are observed but not rendered.
+    /// PR 8 (bridge heartbeat) will surface inter-event stalls
+    /// separately via a `.bridgeUnresponsive` UI state.
+    private func applyStallTransitions(
+        messageId: String,
+        transitions: [StallDetector.Transition]
+    ) {
+        guard !transitions.isEmpty,
+              let index = messages.firstIndex(where: { $0.id == messageId })
+        else { return }
+
+        for transition in transitions {
+            guard case .tool(let id, _, let to) = transition else { continue }
+            for i in messages[index].contentBlocks.indices {
+                if case .toolCall(let blockId, let name, let oldStatus, let tuid, let input, let output) = messages[index].contentBlocks[i],
+                   tuid == id, oldStatus.isInFlight {
+                    messages[index].contentBlocks[i] = .toolCall(
+                        id: blockId, name: name, status: mapDetectorState(to),
+                        toolUseId: tuid, input: input, output: output
+                    )
+                    break
+                }
             }
         }
     }
