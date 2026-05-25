@@ -259,6 +259,75 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    /// Review feedback (Codex P1): the prior detector lowercased the whole
+    /// intent text and built the URL from the lowercased slice, mangling
+    /// case-sensitive paths, query params, and signed tokens. URL casing
+    /// must survive intact end-to-end.
+    func testDirectDesktopActionPreservesUrlCasing() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open file",
+            message: "Open https://example.com/ApiKey/AbC123?Sig=XyZ"
+        )
+        XCTAssertEqual(
+            action,
+            .openURL(
+                url: URL(string: "https://example.com/ApiKey/AbC123?Sig=XyZ")!,
+                browserName: nil
+            )
+        )
+    }
+
+    /// Review feedback (Codex P2): the prior `lower.contains("chrome")`
+    /// scan matched substrings inside hostnames like `developer.chrome.com`
+    /// and forced Chrome even when the user didn't ask for it. Browser
+    /// inference must require explicit phrasing — the URL host alone is
+    /// not consent to override the system default browser.
+    func testDirectDesktopActionDoesNotHijackBrowserFromUrlHost() {
+        let chromeHost = ProactiveTaskExecute.directDesktopAction(
+            title: "Open docs",
+            message: "Open https://developer.chrome.com/docs/extensions"
+        )
+        XCTAssertEqual(
+            chromeHost,
+            .openURL(
+                url: URL(string: "https://developer.chrome.com/docs/extensions")!,
+                browserName: nil
+            ),
+            "URL host containing 'chrome' must not pick Chrome as the browser"
+        )
+
+        let safariHost = ProactiveTaskExecute.directDesktopAction(
+            title: "Open page",
+            message: "Open https://safari-extensions.example.com/release-notes"
+        )
+        XCTAssertEqual(
+            safariHost,
+            .openURL(
+                url: URL(string: "https://safari-extensions.example.com/release-notes")!,
+                browserName: nil
+            ),
+            "URL host containing 'safari' must not pick Safari as the browser"
+        )
+    }
+
+    /// Companion: confirms the explicit "in <Browser>" suffix still routes
+    /// correctly even when the URL host doesn't mention any browser — so
+    /// we know the inference fix didn't accidentally break the supported
+    /// "open <URL> in Chrome" pattern.
+    func testDirectDesktopActionRoutesUrlToChromeViaSuffix() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open page",
+            message: "Open https://example.dev/path in Google Chrome"
+        )
+        XCTAssertEqual(
+            action,
+            .openURL(
+                url: URL(string: "https://example.dev/path")!,
+                browserName: "Google Chrome"
+            )
+        )
+    }
+
     func testCompletionActivityTextDoesNotTruncateFinalMessage() {
         let long = String(repeating: "Final task result with enough detail. ", count: 8)
         XCTAssertEqual(

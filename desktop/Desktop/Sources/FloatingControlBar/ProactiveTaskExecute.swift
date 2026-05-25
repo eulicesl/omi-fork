@@ -128,9 +128,7 @@ enum ProactiveTaskExecute {
     ) -> DirectDesktopAction? {
         let intentText = (title + " " + message)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = intentText.lowercased()
-        let nsLower = lower as NSString
-        let fullRange = NSRange(location: 0, length: nsLower.length)
+        let fullRange = NSRange(location: 0, length: (intentText as NSString).length)
 
         // Strict adjacency guard. The verb ("open"/"launch") must sit next
         // to a recognized target, separated only by a small filler word
@@ -138,31 +136,60 @@ enum ProactiveTaskExecute {
         // "tabs I have open in Chrome" or "the launch I'm planning" —
         // those have "open"/"launch" in the text but not as an imperative
         // adjacent to a known target.
+        //
+        // Patterns match case-insensitively against the *original* intent
+        // text so URL capture preserves the original case — critical for
+        // case-sensitive paths, query params, and signed tokens.
         let appPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(google chrome|chrome|safari|finder|react docs)\b"#
         let urlPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(https?://\S+)"#
+        let opts: NSRegularExpression.Options = [.caseInsensitive]
 
-        let appMatch = (try? NSRegularExpression(pattern: appPattern))?
-            .firstMatch(in: lower, range: fullRange)
-        let urlMatch = (try? NSRegularExpression(pattern: urlPattern))?
-            .firstMatch(in: lower, range: fullRange)
+        let appMatch = (try? NSRegularExpression(pattern: appPattern, options: opts))?
+            .firstMatch(in: intentText, range: fullRange)
+        let urlMatch = (try? NSRegularExpression(pattern: urlPattern, options: opts))?
+            .firstMatch(in: intentText, range: fullRange)
         guard appMatch != nil || urlMatch != nil else { return nil }
 
-        // Pick the requested browser. With the guard above we know the
-        // user used an imperative; a mentioned browser name now reliably
-        // signals routing intent (e.g. "Open https://x in Safari").
-        let browserName: String?
-        if lower.contains("chrome") || lower.contains("google chrome") {
-            browserName = "Google Chrome"
-        } else if lower.contains("safari") {
-            browserName = "Safari"
-        } else {
-            browserName = nil
+        // Browser inference, two-source rule. We only set `browserName`
+        // when the user *explicitly* named a browser; otherwise we let
+        // open(1) fall back to the system default. Two signals count:
+        //
+        // 1. The app-phrase regex captured "chrome"/"safari" — the user
+        //    wrote "Open Chrome" or "Launch Safari" directly.
+        // 2. The intent contains an "in <Browser>" suffix — anchored by
+        //    `\bin\s+` so it can't match inside hostnames like
+        //    `developer.chrome.com` or `safari-extensions.example.com`.
+        //
+        // Substring scans like `lower.contains("chrome")` are wrong here:
+        // they hijack any URL whose host happens to mention a browser.
+        var browserName: String?
+        if let appMatch,
+           let captureRange = Range(appMatch.range(at: 1), in: intentText) {
+            switch String(intentText[captureRange]).lowercased() {
+            case "google chrome", "chrome":
+                browserName = "Google Chrome"
+            case "safari":
+                browserName = "Safari"
+            default:
+                break
+            }
+        }
+        if browserName == nil {
+            let chromeSuffix = #"\bin\s+(?:google\s+)?chrome\b"#
+            let safariSuffix = #"\bin\s+safari\b"#
+            if intentText.range(of: chromeSuffix, options: [.regularExpression, .caseInsensitive]) != nil {
+                browserName = "Google Chrome"
+            } else if intentText.range(of: safariSuffix, options: [.regularExpression, .caseInsensitive]) != nil {
+                browserName = "Safari"
+            }
         }
 
         // "open <URL>" — primary target is the URL itself; the app phrase
         // (if also present) just picks the browser via `browserName`.
-        if let urlMatch, let urlRange = Range(urlMatch.range(at: 1), in: lower) {
-            if let url = URL(string: String(lower[urlRange])) {
+        // URL is captured from the original intent text (not lowercased),
+        // so case-sensitive paths and signed tokens survive intact.
+        if let urlMatch, let urlRange = Range(urlMatch.range(at: 1), in: intentText) {
+            if let url = URL(string: String(intentText[urlRange])) {
                 return .openURL(url: url, browserName: browserName)
             }
         }
@@ -170,8 +197,8 @@ enum ProactiveTaskExecute {
         // Otherwise the user explicitly named an app. Route by the exact
         // target the regex captured, so an incidental link in the body
         // never overrides an explicit app open.
-        if let appMatch, let targetRange = Range(appMatch.range(at: 1), in: lower) {
-            switch String(lower[targetRange]) {
+        if let appMatch, let targetRange = Range(appMatch.range(at: 1), in: intentText) {
+            switch String(intentText[targetRange]).lowercased() {
             case "google chrome", "chrome":
                 return .openApplication(name: "Google Chrome")
             case "safari":
@@ -231,17 +258,6 @@ enum ProactiveTaskExecute {
     static func completionActivityText(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Done" : trimmed
-    }
-
-    private static func firstURL(in text: String) -> URL? {
-        guard
-            let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue),
-            let match = detector.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-            let url = match.url
-        else {
-            return nil
-        }
-        return url
     }
 
     /// Sprint 3 / P8 — programmatic verification follow-up. Fired on the same
