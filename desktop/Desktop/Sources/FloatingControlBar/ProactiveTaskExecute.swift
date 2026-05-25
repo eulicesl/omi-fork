@@ -110,6 +110,26 @@ enum ProactiveTaskExecute {
         case openURL(url: URL, browserName: String?)
     }
 
+    /// Negation deferral pattern. If the user is telling us NOT to open
+    /// something ("Do not open Chrome", "Don't launch Safari", "Never
+    /// open Finder") the fast path would do the exact opposite of the
+    /// request. Defer to the agent path. Matches standalone negation
+    /// words ("not", "never", "cannot", "do not") and contraction
+    /// forms ending in `n't` (`don't`, `can't`, `won't`, `doesn't`,
+    /// `didn't`, `wouldn't`, `shouldn't`, `couldn't`, `isn't`, `wasn't`,
+    /// `aren't`, `weren't`, `hadn't`, `hasn't`, `haven't`, `needn't`,
+    /// `mustn't`). Curly apostrophes (`'`) are tolerated alongside
+    /// straight ones.
+    private static let negationPattern =
+        #"(?i)\b(?:not|never|cannot|do\s+not|"# +
+        #"don['’]t|doesn['’]t|didn['’]t|"# +
+        #"won['’]t|can['’]t|"# +
+        #"isn['’]t|wasn['’]t|aren['’]t|weren['’]t|"# +
+        #"wouldn['’]t|shouldn['’]t|couldn['’]t|"# +
+        #"hadn['’]t|hasn['’]t|haven['’]t|"# +
+        #"needn['’]t|mustn['’]t"# +
+        #")\b"#
+
     /// Multi-step deferral pattern (fast-path → LLM fallback). Triggers on:
     /// - a coordinating conjunction (`and|then|also`) followed by content, or
     /// - any secondary action verb that suggests more work after the open.
@@ -207,6 +227,20 @@ enum ProactiveTaskExecute {
         if scanText.range(
             of: multiStepPattern,
             options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return nil
+        }
+        // Negation guard. "Do not open Chrome" / "Don't launch Safari"
+        // must defer — the fast path would otherwise do the exact
+        // opposite of the user's stated intent. Scope to scanText (the
+        // text outside the matched verb-target span) so a URL whose
+        // path or query happens to contain a token like "cannot" doesn't
+        // false-trip. Conservative-by-design: a false positive defers
+        // an open we could have run; a false negative opens an app
+        // against the user's explicit instruction.
+        if scanText.range(
+            of: negationPattern,
+            options: [.regularExpression]
         ) != nil {
             return nil
         }

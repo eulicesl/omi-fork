@@ -616,6 +616,84 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Negation deferral (Codex P1, fix v8)
+
+    /// Review feedback (Codex P1): the matcher accepts any `open|launch`
+    /// phrase without checking for nearby negation, so a task like
+    /// "Do not open Chrome" or "Don't launch Safari" still triggers
+    /// the fast path — running `/usr/bin/open` against the user's
+    /// explicit instruction. The negation guard now defers on
+    /// `not|never|cannot|do not` and on any `n't`-style contraction.
+    func testDirectDesktopActionDefersOnDoNotOpen() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Do not open Chrome"
+            ),
+            "negated open intent must defer — fast-pathing it would do the exact opposite of the user's request"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnDontLaunch() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Don't launch Safari"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnCurlyApostropheContraction() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Don\u{2019}t open Finder"
+            ),
+            "curly apostrophe (U+2019) in contractions must also defer"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnNeverOpen() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Never open Chrome from this notification"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnCannotOpen() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "You cannot open Safari for me here"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnNegationAfterMatch() {
+        // Negation appearing AFTER the matched phrase should also
+        // defer — "Open Chrome but don't send anything" implies
+        // multi-step + negation, both reasons to route to the agent.
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome but don't send anything"
+            )
+        )
+    }
+
+    func testDirectDesktopActionStillFastPathsWithoutNegation() {
+        // Sanity check: removing the negation makes it fast-path again.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome"
+            ),
+            .openApplication(name: "Google Chrome")
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal
