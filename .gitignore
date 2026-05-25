@@ -234,9 +234,9 @@ openmemory.md
 
 # Execute eval — local-only test config + run outputs + macOS metadata.
 # Ad-hoc developer runs land in results/<timestamp>.jsonl and stay ignored;
-# milestone baselines we want versioned go into results/baselines/ which is
-# tracked (the leading `!` un-ignores it).
+# milestone baselines go into results/baselines/<name>.jsonl which IS tracked.
+# Note: we ignore files directly under results/ rather than the whole directory,
+# because git can't re-include paths beneath an excluded directory.
 desktop/e2e/execute-eval/tasks.local.json
-desktop/e2e/execute-eval/results/
-!desktop/e2e/execute-eval/results/baselines/
+desktop/e2e/execute-eval/results/*.jsonl
 desktop/e2e/execute-eval/**/.DS_Store
