@@ -40,6 +40,13 @@ actor AgentBridge {
   /// Callback for auth success
   typealias AuthSuccessHandler = @Sendable () -> Void
 
+  /// PR 8: Callback for bridge heartbeats. Fires every ~5s while a
+  /// turn is in flight. Params: (turnId, uptimeMs, upstreamLastEventMs).
+  /// `ChatProvider` forwards this to `StallDetector.observeHeartbeat(atMs:)`
+  /// so the detector can distinguish upstream-slow from
+  /// bridge-unresponsive.
+  typealias HeartbeatHandler = @Sendable (String, Int, Int) -> Void
+
   /// Inbound message types (Bridge → Swift, read from stdout)
   private enum InboundMessage {
     case `init`(sessionId: String)
@@ -54,6 +61,12 @@ actor AgentBridge {
     case error(message: String)
     case authRequired(methods: [[String: Any]], authUrl: String?)
     case authSuccess
+    /// PR 8 heartbeat (5s cadence while a turn is in flight). Carries
+    /// turnId matching QueryMessage.id, bridge uptimeMs since turn
+    /// start, and upstreamLastEventMs since the most recent
+    /// non-heartbeat outbound. Lets StallDetector distinguish
+    /// upstream-slow from bridge-unresponsive.
+    case heartbeat(turnId: String, uptimeMs: Int, upstreamLastEventMs: Int)
   }
 
   // MARK: - Configuration
@@ -430,7 +443,8 @@ actor AgentBridge {
     onThinkingDelta: @escaping ThinkingDeltaHandler = { _ in },
     onToolResultDisplay: @escaping ToolResultDisplayHandler = { _, _, _ in },
     onAuthRequired: @escaping AuthRequiredHandler = { _, _ in },
-    onAuthSuccess: @escaping AuthSuccessHandler = {}
+    onAuthSuccess: @escaping AuthSuccessHandler = {},
+    onHeartbeat: @escaping HeartbeatHandler = { _, _, _ in }
   ) async throws -> QueryResult {
     guard isRunning else {
       throw BridgeError.notRunning
@@ -585,6 +599,12 @@ actor AgentBridge {
 
       case .authSuccess:
         onAuthSuccess()
+
+      case .heartbeat(let turnId, let uptimeMs, let upstreamLastEventMs):
+        // PR 8: forward to the caller so ChatProvider can feed it into
+        // StallDetector.observeHeartbeat(atMs:). The bridge has no
+        // detector state of its own — this is a pure pass-through.
+        onHeartbeat(turnId, uptimeMs, upstreamLastEventMs)
       }
     }
   }
@@ -732,6 +752,20 @@ actor AgentBridge {
 
     case "auth_success":
       return .authSuccess
+
+    case "heartbeat":
+      // PR 8: liveness pulse from the Node bridge every 5s during an
+      // active turn. Used by StallDetector to distinguish
+      // upstream-slow (heartbeat arriving, no model output) from
+      // bridge-unresponsive (heartbeat missing).
+      let turnId = dict["turnId"] as? String ?? ""
+      let uptimeMs = dict["uptimeMs"] as? Int ?? 0
+      let upstreamLastEventMs = dict["upstreamLastEventMs"] as? Int ?? 0
+      return .heartbeat(
+        turnId: turnId,
+        uptimeMs: uptimeMs,
+        upstreamLastEventMs: upstreamLastEventMs
+      )
 
     default:
       log("AgentBridge: unknown message type: \(type)")

@@ -27,20 +27,25 @@ final class StallDetectorTests: XCTestCase {
     XCTAssertEqual(state, .running)
   }
 
-  func testGapAtSlowThresholdPromotesToSlow() async {
+  /// PR 8 changed the inter-event promotion to be heartbeat-aware.
+  /// With no heartbeat ever observed, ANY gap past `slowGapMs`
+  /// classifies as `.bridgeUnresponsive` because (a) the bridge has
+  /// never proven itself alive and (b) the gap is long enough to
+  /// matter. This is the right call: if the bridge isn't emitting
+  /// heartbeats, we can't distinguish "model slow" from "subprocess
+  /// dead", so we assume the worse for surfacing purposes.
+  func testGapWithoutHeartbeatPromotesToBridgeUnresponsive() async {
     let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
     let transitions = await detector.tick(atMs: thresholds.slowGapMs)
-    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .slow)])
+    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .bridgeUnresponsive)])
   }
 
-  func testGapAtStalledThresholdPromotesToStalled() async {
+  func testLongGapWithoutHeartbeatStaysBridgeUnresponsive() async {
     let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
     let transitions = await detector.tick(atMs: thresholds.stalledGapMs)
-    // Transition jumps straight from .running to .stalled (no
-    // intermediate .slow emit) when tick crosses both thresholds in
-    // one call. That's intentional: the UI only needs to know the
-    // current promoted level, not the path taken.
-    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .stalled)])
+    // No intermediate transitions — went straight to
+    // .bridgeUnresponsive on the first tick past slowGapMs.
+    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .bridgeUnresponsive)])
   }
 
   func testRepeatedTickAtSameTimeReturnsEmptyAfterFirst() async {
@@ -53,11 +58,11 @@ final class StallDetectorTests: XCTestCase {
 
   func testNewEventResetsInterEventStateAndEmitsTransition() async {
     let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
-    // Promote to stalled.
+    // No heartbeat observed → promotes to .bridgeUnresponsive.
     _ = await detector.tick(atMs: thresholds.stalledGapMs)
-    // New event arrives.
+    // A real event arrives — resets to .running.
     let transitions = await detector.step(kind: .other, atMs: thresholds.stalledGapMs + 1)
-    XCTAssertEqual(transitions, [.interEvent(from: .stalled, to: .running)])
+    XCTAssertEqual(transitions, [.interEvent(from: .bridgeUnresponsive, to: .running)])
     let state = await detector.interEventState
     XCTAssertEqual(state, .running)
   }
@@ -94,16 +99,19 @@ final class StallDetectorTests: XCTestCase {
     let transitions = await detector.tick(atMs: 100 + thresholds.slowGapMs)
     // Both timers cross at this point: the inter-event gap (100 → 100+slow)
     // and tool t1 (100 → 100+slow). Expect both transitions, in some
-    // order.
+    // order. Per-tool promotion stays in the original 3-state model
+    // (.slow); inter-event uses PR 8's heartbeat-aware promotion and
+    // — with no heartbeat seen — goes to .bridgeUnresponsive.
     XCTAssertEqual(transitions.count, 2)
-    XCTAssertTrue(transitions.contains(.interEvent(from: .running, to: .slow)))
+    XCTAssertTrue(transitions.contains(.interEvent(from: .running, to: .bridgeUnresponsive)))
     XCTAssertTrue(transitions.contains(.tool(id: "t1", from: .running, to: .slow)))
   }
 
   func testToolCompletionEmitsBackToRunningTransitionIfPromoted() async {
     let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
     _ = await detector.step(kind: .toolStarted(id: "t1"), atMs: 0)
-    // Promote to stalled.
+    // Per-tool reaches .stalled (per-tool still uses the original
+    // 3-state model).
     _ = await detector.tick(atMs: thresholds.stalledGapMs)
     let toolState = await detector.currentToolState(id: "t1")
     XCTAssertEqual(toolState, .stalled)
@@ -114,10 +122,10 @@ final class StallDetectorTests: XCTestCase {
       atMs: thresholds.stalledGapMs + 1
     )
     // Expect a tool transition back to .running plus the inter-event
-    // reset (event arrival also resets inter-event from .stalled to
-    // .running).
+    // reset (event arrival resets inter-event from
+    // .bridgeUnresponsive back to .running).
     XCTAssertTrue(transitions.contains(.tool(id: "t1", from: .stalled, to: .running)))
-    XCTAssertTrue(transitions.contains(.interEvent(from: .stalled, to: .running)))
+    XCTAssertTrue(transitions.contains(.interEvent(from: .bridgeUnresponsive, to: .running)))
 
     // After completion, tool is no longer tracked.
     let postCompletionState = await detector.currentToolState(id: "t1")
@@ -207,20 +215,96 @@ final class StallDetectorTests: XCTestCase {
       if case .interEvent(let from, let to) = transition { return (from, to) }
       return nil
     }
-    // Expect at minimum: running→slow, slow→stalled (during the gap),
-    // stalled→running (when "back." arrives).
+    // PR 8: inter-event promotion is now heartbeat-aware. With no
+    // heartbeat observed during this scenario, the first periodic
+    // tick past slowGapMs goes straight to .bridgeUnresponsive, and
+    // it stays there until the next event arrives.
     let states = interTransitions.map { ($0.0, $0.1) }
     XCTAssertTrue(
-      states.contains(where: { $0.0 == .running && $0.1 == .slow }),
-      "expected promotion to .slow during the stall; got \(states)"
+      states.contains(where: { $0.0 == .running && $0.1 == .bridgeUnresponsive }),
+      "expected promotion to .bridgeUnresponsive during the stall; got \(states)"
     )
     XCTAssertTrue(
-      states.contains(where: { $0.0 == .slow && $0.1 == .stalled }),
-      "expected promotion to .stalled during the stall; got \(states)"
-    )
-    XCTAssertTrue(
-      states.contains(where: { $0.0 == .stalled && $0.1 == .running }),
+      states.contains(where: { $0.0 == .bridgeUnresponsive && $0.1 == .running }),
       "expected recovery to .running when the next event arrived; got \(states)"
+    )
+  }
+
+  // MARK: - PR 8 heartbeat-aware inter-event promotion
+
+  /// A fresh heartbeat means the bridge is alive — a long gap should
+  /// promote to `.upstreamSlow`, NOT `.bridgeUnresponsive`.
+  func testGapWithFreshHeartbeatPromotesToUpstreamSlow() async {
+    let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
+    // Heartbeat arrives at 1s.
+    _ = await detector.observeHeartbeat(atMs: 1_000)
+    // Tick at slowGapMs — last heartbeat was less than bridgeUnresponsiveMs ago.
+    let transitions = await detector.tick(atMs: thresholds.slowGapMs)
+    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .upstreamSlow)])
+  }
+
+  /// If the heartbeat has been silent longer than `bridgeUnresponsiveMs`,
+  /// the detector classifies the inter-event state as
+  /// `.bridgeUnresponsive` even if heartbeats were observed earlier.
+  func testStaleHeartbeatPromotesToBridgeUnresponsive() async {
+    let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
+    // Heartbeat at 1s.
+    _ = await detector.observeHeartbeat(atMs: 1_000)
+    // Tick well past 1s + bridgeUnresponsiveMs.
+    let tickAt = 1_000 + thresholds.bridgeUnresponsiveMs + 1
+    let transitions = await detector.tick(atMs: tickAt)
+    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .bridgeUnresponsive)])
+  }
+
+  /// A new heartbeat arriving after `.bridgeUnresponsive` recovers
+  /// the state to `.upstreamSlow` (the gap to the last real event
+  /// is still long, but the bridge has just proved itself alive).
+  func testHeartbeatRecoversBridgeUnresponsiveToUpstreamSlow() async {
+    let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
+    // No heartbeats yet → tick at slowGapMs promotes to .bridgeUnresponsive.
+    let initial = await detector.tick(atMs: thresholds.slowGapMs)
+    XCTAssertEqual(initial, [.interEvent(from: .running, to: .bridgeUnresponsive)])
+
+    // Heartbeat arrives. The gap to lastEventAtMs is still long, so
+    // the new state is .upstreamSlow.
+    let recovery = await detector.observeHeartbeat(atMs: thresholds.slowGapMs + 1_000)
+    XCTAssertEqual(
+      recovery,
+      [.interEvent(from: .bridgeUnresponsive, to: .upstreamSlow)]
+    )
+  }
+
+  /// Heartbeats do NOT reset the inter-event gap timer — they're
+  /// liveness pulses, not model output. A heartbeat in the middle of
+  /// an otherwise-silent stream must not falsely report .running.
+  func testHeartbeatDoesNotResetGapTimer() async {
+    let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
+    // Heartbeats at 1s and 6s — bridge is alive.
+    _ = await detector.observeHeartbeat(atMs: 1_000)
+    _ = await detector.observeHeartbeat(atMs: 6_000)
+    // The last *real event* was at 0 (startedAtMs). Tick at slowGapMs
+    // → gap from last real event is slowGapMs. Should promote, not
+    // reset.
+    let transitions = await detector.tick(atMs: thresholds.slowGapMs)
+    XCTAssertEqual(transitions, [.interEvent(from: .running, to: .upstreamSlow)])
+  }
+
+  /// Real-event reset takes precedence over heartbeat-based
+  /// classification. After a real event arrives, the state is
+  /// .running regardless of when the last heartbeat happened.
+  func testRealEventOverridesHeartbeatBasedClassification() async {
+    let detector = StallDetector(thresholds: thresholds, startedAtMs: 0)
+    // Reach .upstreamSlow.
+    _ = await detector.observeHeartbeat(atMs: 1_000)
+    _ = await detector.tick(atMs: thresholds.slowGapMs)
+    let prePromotion = await detector.interEventState
+    XCTAssertEqual(prePromotion, .upstreamSlow)
+
+    // Real event arrives.
+    let transitions = await detector.step(kind: .other, atMs: thresholds.slowGapMs + 1)
+    XCTAssertTrue(
+      transitions.contains(.interEvent(from: .upstreamSlow, to: .running)),
+      "real event must reset gap regardless of heartbeat staleness"
     )
   }
 

@@ -18,13 +18,25 @@ struct StallThresholds: Sendable, Equatable {
   /// `AgentBridge.interrupt()` by Commit C/D of PR 1).
   let stalledGapMs: Int
 
-  init(slowGapMs: Int, stalledGapMs: Int) {
+  /// PR 8: time since the last bridge heartbeat after which the
+  /// detector promotes the inter-event state to `.bridgeUnresponsive`.
+  /// 12s default; PR 9 tunes. The bridge emits heartbeats at 5s
+  /// cadence, so 12s = "missed at least 2 in a row" — robust against
+  /// a single dropped frame.
+  let bridgeUnresponsiveMs: Int
+
+  init(slowGapMs: Int, stalledGapMs: Int, bridgeUnresponsiveMs: Int = 12_000) {
     precondition(
       slowGapMs > 0 && stalledGapMs > slowGapMs,
       "stalledGapMs must be > slowGapMs > 0"
     )
+    precondition(
+      bridgeUnresponsiveMs > 0,
+      "bridgeUnresponsiveMs must be > 0"
+    )
     self.slowGapMs = slowGapMs
     self.stalledGapMs = stalledGapMs
+    self.bridgeUnresponsiveMs = bridgeUnresponsiveMs
   }
 
   /// V1 ship defaults. Slow at 8s, stalled at 20s. PR 9 tunes these

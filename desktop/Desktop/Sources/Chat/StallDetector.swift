@@ -31,6 +31,15 @@ actor StallDetector {
     case running
     case slow
     case stalled
+    /// PR 8: inter-event gap exceeded `slowGapMs` AND a bridge
+    /// heartbeat arrived within `bridgeUnresponsiveMs`. The model is
+    /// slow but the bridge subprocess is alive.
+    case upstreamSlow
+    /// PR 8: the bridge has not emitted a heartbeat in
+    /// `bridgeUnresponsiveMs` (and the turn is in flight). The
+    /// subprocess is probably dead or the heartbeat timer has stopped
+    /// firing. UI surfaces a more severe affordance than `.stalled`.
+    case bridgeUnresponsive
   }
 
   /// What kind of event observation is being recorded.
@@ -72,6 +81,13 @@ actor StallDetector {
   /// In-flight tools keyed by `toolUseId`. Removed on completion.
   private var toolStartedAtMs: [String: Int] = [:]
   private var toolStates: [String: State] = [:]
+
+  /// PR 8: timestamp of the most recent bridge heartbeat, or `nil` if
+  /// no heartbeat has been observed yet. The inter-event promotion
+  /// rule uses this to distinguish `.upstreamSlow` (heartbeat fresh,
+  /// model output stalled) from `.bridgeUnresponsive` (heartbeat
+  /// missing past `bridgeUnresponsiveMs`).
+  private(set) var lastHeartbeatAtMs: Int?
 
   // MARK: - Init
 
@@ -125,6 +141,22 @@ actor StallDetector {
     evaluate(atMs: atMs)
   }
 
+  /// PR 8: record a bridge heartbeat arrival. Heartbeats are out-of-band
+  /// liveness pulses — they do NOT reset the inter-event gap timer
+  /// (which tracks model output, not bridge liveness), but they DO
+  /// inform the inter-event promotion rule: a long gap with fresh
+  /// heartbeats promotes to `.upstreamSlow`; a long gap with stale
+  /// heartbeats promotes to `.bridgeUnresponsive`.
+  ///
+  /// Heartbeats are also a recovery signal: if the inter-event state
+  /// was `.bridgeUnresponsive` and a fresh heartbeat arrives, the
+  /// next `tick()` can reclassify back to `.upstreamSlow` (or to
+  /// `.running` if a real event has also arrived since).
+  func observeHeartbeat(atMs: Int) -> [Transition] {
+    lastHeartbeatAtMs = atMs
+    return evaluate(atMs: atMs)
+  }
+
   // MARK: - Internal
 
   private func observe(kind: EventKind, atMs: Int) -> [Transition] {
@@ -167,18 +199,25 @@ actor StallDetector {
   private func evaluate(atMs: Int) -> [Transition] {
     var transitions: [Transition] = []
 
-    // Inter-event timer.
+    // Inter-event timer — PR 8 uses heartbeat awareness when picking
+    // between `.upstreamSlow` and `.bridgeUnresponsive`.
     let interGap = atMs - lastEventAtMs
-    let newInter = promotedState(forElapsedMs: interGap)
+    let newInter = promotedInterEventState(
+      forElapsedGapMs: interGap,
+      atMs: atMs
+    )
     if newInter != interEventState {
       transitions.append(.interEvent(from: interEventState, to: newInter))
       interEventState = newInter
     }
 
-    // Per-tool timers.
+    // Per-tool timers continue to use the original 3-state promotion
+    // (running / slow / stalled). Heartbeat health is a turn-level
+    // signal, not a per-tool one — a specific tool can be slow for
+    // its own reasons regardless of bridge liveness.
     for (toolId, startedAt) in toolStartedAtMs {
       let duration = atMs - startedAt
-      let newToolState = promotedState(forElapsedMs: duration)
+      let newToolState = promotedToolState(forElapsedMs: duration)
       let oldToolState = toolStates[toolId] ?? .running
       if newToolState != oldToolState {
         transitions.append(.tool(id: toolId, from: oldToolState, to: newToolState))
@@ -189,9 +228,35 @@ actor StallDetector {
     return transitions
   }
 
-  private func promotedState(forElapsedMs elapsed: Int) -> State {
+  /// PR 1 promotion rule for per-tool timers (unchanged).
+  private func promotedToolState(forElapsedMs elapsed: Int) -> State {
     if elapsed >= thresholds.stalledGapMs { return .stalled }
     if elapsed >= thresholds.slowGapMs { return .slow }
     return .running
+  }
+
+  /// PR 8 promotion rule for the inter-event gap:
+  ///
+  /// 1. Gap < `slowGapMs` → `.running` (regardless of heartbeat status).
+  /// 2. Gap ≥ `slowGapMs` AND heartbeat is fresh (within
+  ///    `bridgeUnresponsiveMs`) → `.upstreamSlow` — bridge alive,
+  ///    upstream model is slow.
+  /// 3. Gap ≥ `slowGapMs` AND heartbeat is stale (or never received)
+  ///    → `.bridgeUnresponsive` — subprocess probably dead.
+  ///
+  /// Pre-PR-8 sessions never observe a heartbeat, so they end up in
+  /// `.bridgeUnresponsive` on a long gap — which is technically less
+  /// accurate than the old `.stalled`, but the PR 8 docstring lets
+  /// the UI choose the right copy for either case.
+  private func promotedInterEventState(
+    forElapsedGapMs elapsed: Int,
+    atMs: Int
+  ) -> State {
+    guard elapsed >= thresholds.slowGapMs else { return .running }
+    if let last = lastHeartbeatAtMs,
+       atMs - last < thresholds.bridgeUnresponsiveMs {
+      return .upstreamSlow
+    }
+    return .bridgeUnresponsive
   }
 }

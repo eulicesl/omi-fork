@@ -2857,6 +2857,21 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                         self?.isClaudeAuthRequired = false
                         self?.checkClaudeConnectionStatus()
                     }
+                },
+                onHeartbeat: { [weak self] _, _, _ in
+                    // PR 8: every ~5s while the bridge is running this
+                    // turn. Forward to the detector so it can
+                    // distinguish upstream-slow from
+                    // bridge-unresponsive. We discard the bridge's
+                    // own uptimeMs / upstreamLastEventMs values and
+                    // use wall-clock here so the detector's
+                    // internal clock stays consistent across all
+                    // event callbacks.
+                    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+                    Task { @MainActor [weak self] in
+                        let transitions = await stallDetector.observeHeartbeat(atMs: nowMs)
+                        self?.applyStallTransitions(messageId: aiMessageId, transitions: transitions)
+                    }
                 }
             )
 
@@ -3349,12 +3364,28 @@ A screenshot may be attached — use it silently only if relevant. Never mention
 
     /// Map a `StallDetector.State` to the matching `ToolCallStatus`.
     /// The two enums are deliberately separate — the detector tracks a
-    /// 3-state lifecycle independent of UI/persistence concerns.
+    /// 5-state lifecycle (running/slow/stalled + PR 8 upstreamSlow/
+    /// bridgeUnresponsive) independent of UI/persistence concerns.
+    ///
+    /// In current usage this is only called from `applyStallTransitions`
+    /// for `.tool(...)` transitions, which always use the original
+    /// 3-state per-tool promotion — `.upstreamSlow` and
+    /// `.bridgeUnresponsive` are inter-event-only and shouldn't reach
+    /// this function in practice. The explicit mappings exist for
+    /// exhaustiveness and to make the intended UI semantics readable
+    /// at the call site rather than hidden behind a `default:`.
     private func mapDetectorState(_ state: StallDetector.State) -> ToolCallStatus {
         switch state {
         case .running: return .running
         case .slow: return .slow
         case .stalled: return .stalled
+        // PR 8 inter-event-only states. If a future PR routes them
+        // through here (e.g. inter-event-driven message-level
+        // affordance), .upstreamSlow lands as .slow visually and
+        // .bridgeUnresponsive escalates to .failed because the
+        // detector has effectively given up.
+        case .upstreamSlow: return .slow
+        case .bridgeUnresponsive: return .failed
         }
     }
 
