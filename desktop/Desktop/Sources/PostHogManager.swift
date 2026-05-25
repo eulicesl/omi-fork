@@ -97,6 +97,40 @@ class PostHogManager {
         log("PostHog: Tracked event '\(eventName)'")
     }
 
+    // MARK: - Chat Reliability (PR 0a)
+
+    /// Separate init flag for chat-reliability events. Lets dev builds
+    /// emit chat.turn.* without flipping `isInitialized` and silently
+    /// re-enabling every other dev-skipped event in the process.
+    private var chatReliabilityInitialized = false
+
+    /// Track a chat-reliability telemetry event. Always emits — even
+    /// from dev builds where `AnalyticsManager.isDevBuild` would have
+    /// short-circuited the normal `initialize()` path. The
+    /// dev/prod separation moves to the dashboard side via the
+    /// `build_dev_bundle != true` filter that PR 0a applies to every
+    /// production insight.
+    ///
+    /// Sets up the PostHog SDK on first call (if neither this path nor
+    /// the normal `initialize()` has run yet) but does NOT flip
+    /// `isInitialized` — so the existing `track(_:)` method still
+    /// silently drops calls from existing event sites in dev builds.
+    /// That isolates the new chat-reliability emit path without
+    /// implicitly enabling every other event.
+    func trackChatReliability(_ eventName: String, properties: [String: Any]) {
+        if !chatReliabilityInitialized && !isInitialized {
+            let config = PostHogConfig(apiKey: apiKey, host: host)
+            config.captureApplicationLifecycleEvents = false
+            config.captureScreenViews = false  // chat-reliability path doesn't need screen tracking
+            config.preloadFeatureFlags = false  // not used by these events
+            PostHogSDK.shared.setup(config)
+            log("PostHog: Initialized SDK via chat-reliability path (isInitialized stays false)")
+        }
+        chatReliabilityInitialized = true
+        PostHogSDK.shared.capture(eventName, properties: properties)
+        log("PostHog: Tracked chat-reliability event '\(eventName)'")
+    }
+
     // MARK: - Screen Tracking
 
     /// Track a screen view

@@ -525,6 +525,39 @@ class AnalyticsManager {
     PostHogManager.shared.track("chat_agent_error", properties: props)
   }
 
+  // MARK: - Chat Reliability (PR 0a)
+  //
+  // The three chat-reliability events emit via PostHogManager's
+  // dedicated `trackChatReliability(...)` path which bypasses the
+  // existing dev-build skip. Dev/named-bundle traffic ends up in the
+  // same PostHog project tagged with `build_dev_bundle = true`; the
+  // production dashboards filter `build_dev_bundle != true` to
+  // exclude it. See MACOS_CHAT_RELIABILITY_ROADMAP.md PR 0a.
+  //
+  // Build metadata (build_*) is merged at emit time so every payload
+  // carries the same provenance fields.
+
+  func chatTurnStarted(_ payload: ChatTurnStartedPayload) {
+    emitChatReliability(eventName: ChatTurnStartedPayload.eventName, payload: payload)
+  }
+
+  func chatTurnCompleted(_ payload: ChatTurnCompletedPayload) {
+    emitChatReliability(eventName: ChatTurnCompletedPayload.eventName, payload: payload)
+  }
+
+  func chatTurnFeedback(_ payload: ChatTurnFeedbackPayload) {
+    emitChatReliability(eventName: ChatTurnFeedbackPayload.eventName, payload: payload)
+  }
+
+  private func emitChatReliability(eventName: String, payload: RedactedAnalyticsPayload) {
+    var props = payload.asProperties
+    let buildProps = BuildMetadataTags.current.asProperties
+    for (key, value) in buildProps {
+      props[key] = value
+    }
+    PostHogManager.shared.trackChatReliability(eventName, properties: props)
+  }
+
   // MARK: - Conversation Events (Additional)
 
   func conversationReprocessed(conversationId: String, appId: String) {
