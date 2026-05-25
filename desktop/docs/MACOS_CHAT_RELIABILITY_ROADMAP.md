@@ -198,7 +198,7 @@ PRs 2 and 6 can ship in parallel with the 0a/0b → 1 critical path.
 - `AnalyticsRedactionTests` reflects over each payload struct and rejects forbidden field names.
 - HMAC-SHA256 user-id hashing with per-env secret (`OMI_TELEMETRY_HMAC_SALT`). Startup warning fires both when unset and when set-but-equals the dev-local literal — catches bad copy-paste into prod config.
 - Eval Firebase UID locked at `rg0PvY9mhKRARcYxkHHYh4iAkc12` for V1 (user's personal account, data-mixing accepted). The PR 7 seed script hardcodes this UID; before this branch upstreams to `BasedHardware/omi`, swap to a dedicated `omi-eval@…` UID.
-- **Retrofit the existing PostHog source-of-truth dashboard** (`https://us.posthog.com/project/302298/dashboard/1624254`, 14 insights) to filter `build_dev_bundle != true` on every insight. NOT `= false` — HogQL treats missing ≠ false, so `= false` would exclude every event predating PR 0a's emission and blank the charts. Must land in the same PR as the telemetry plumbing — otherwise dev-tagged events from named bundles contaminate the production metric the moment emission starts.
+- **Retrofit the existing PostHog source-of-truth dashboard** (`https://us.posthog.com/project/302298/dashboard/1624254`, 14 insights) to filter `build_dev_bundle != true` on every insight. NOT `= false` — HogQL treats missing ≠ false, so `= false` would exclude every event predating PR 0a's emission and blank the charts. **Status post-verification (2026-05-25):** dashboard is currently uncontaminated because all 14 insights count legacy event names (`message_rated`, `chat_agent_error`, `chat_tool_call_completed`, etc.) and the named bundle only emits the new `chat.turn.*` event names. The retrofit is therefore **preemptive correctness**, not active cleanup — required before any future insight tiles count `chat.turn.*` events OR any future PR adds legacy-name emits from the named bundle. Should still ship in this PR or immediately after; not blocking.
 - **Deprecate the bare `build` and `build_number` properties.** Audited 2026-05-25 by user: over 30 days on macOS, `build` appears on 34 events out of 7.6M (0.0004%), `build_number` on 1 event. PostHog's auto-captured `$app_build` appears on 4,975,946 events — and 100% of the events carrying `build` (34/34) also carry `$app_build` with identical values. Confirmed redundant. Remove the emit sites in this PR.
 
 **Local verification gate.**
@@ -219,6 +219,30 @@ PRs 2 and 6 can ship in parallel with the 0a/0b → 1 critical path.
 - Orphan detector: `count(started) − count(completed) ≈ 0` over a settled window.
 - Redaction tests pass; no raw text in any emitted event.
 - Production dashboard (`build_dev_bundle != true`) is live: `like_ratio` by `bridgeMode` × `outcome`. PR validation dashboard (`build_dev_bundle = true AND build_git_sha`) is also live.
+
+**Per-event-type field set (locked).** Completion-only fields stay
+completion-only — adding null defaults to `started` / `feedback` events
+would falsely advertise they carry that data.
+
+| Field             | `started` | `completed` | `feedback` |
+|-------------------|-----------|-------------|------------|
+| `turnId`          | ✓         | ✓           | ✓          |
+| `bridgeMode`      | ✓         | ✓           | ✓          |
+| `model`           | ✓         | ✓           | —          |
+| `hashedUserId`    | ✓         | ✓           | ✓          |
+| `outcome`         | —         | ✓           | —          |
+| `totalMs`         | —         | ✓           | —          |
+| `firstTokenMs`    | —         | ✓ (nullable)| —          |
+| `toolCallCount`   | —         | ✓           | —          |
+| `toolNames[]`     | —         | ✓           | —          |
+| `stallEventsEmitted` | —      | ✓           | —          |
+| `errorClass`      | —         | ✓ (nullable, errored/timeout outcomes only) | — |
+| `rating`          | —         | —           | ✓          |
+| Build metadata    | ✓ all 6   | ✓ all 6     | ✓ all 6    |
+
+Queries that filter on outcome-specific fields use `outcome IS NOT NULL`
+or the field directly — they get clean semantics rather than having
+to filter on a sentinel value.
 
 **Rollback.** Feature flag `CHAT_TELEMETRY_V2` gates emit for first 24h. Pure addition; reverts cleanly.
 
@@ -715,6 +739,8 @@ These are recorded here once provisioned. Do not start PR 7 until these are pres
 | Bridge-unresponsive threshold default | 12s (tuned in PR 9) |
 | `slowGapMs` default | 8000 (tuned in PR 9) |
 | `stalledGapMs` default | 20000 (tuned in PR 9) |
+| **PR 0a runtime verification (2026-05-25)** | 4 `chat.turn.started` + 2 `chat.turn.completed` (1 success Turn 1, 1 success Turn 2) + 1 `chat.turn.feedback` confirmed in PostHog with correct `build_*` tagging, opaque `hashedUserId` (44-char base64, no UID leakage), turnId join intact across event types. Salt warning fired at startup (unset-branch). The `set-but-equals-dev-literal` branch is unit-tested but not runtime-exercised. Two interrupt-cancellation turns (3a + 3b) produced `chat.turn.started` with no matching `chat.turn.completed` — the orphan-detection signal working as designed; underlying interrupt-path bug is PR 3's scope. |
+| **PR 0a follow-up: build_git_sha injection** | `run.sh` should write `BuildGitSha` + `BuildGitBranch` to Info.plist so per-PR dashboard slicing works. Currently both fall back to `"unknown"`. Required before multiple PRs run named-bundle validation concurrently — otherwise the PR-validation dashboard can't distinguish SHAs. Not blocking PR 0a exit. |
 
 **Embedded individual insights (for reference; all are tiles on the source-of-truth dashboard above):**
 
