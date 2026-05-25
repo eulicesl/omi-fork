@@ -155,16 +155,34 @@ enum ExecuteVerificationGate {
         return candidates
     }
 
-    /// Pull the single-line value after `prefix` (up to the next newline).
+    /// Pull the single-line value after `prefix`, anchored to line start.
     /// Returns nil when the prefix is absent — callers fall through to the
     /// next candidate.
+    ///
+    /// Why line-anchored: the TASK CONTEXT block uses bullets like
+    /// `- Detail: <content>` where `<content>` is a free-text field that
+    /// may itself contain a literal `"Task: ..."` or `"Details: ..."`
+    /// substring. A naive `query.range(of: "Task: ")` would match the
+    /// FIRST occurrence (inside the context bullet), pulling the wrong
+    /// value — and with actionable-wins semantics that's a real
+    /// misclassification. `ProactiveTaskExecute.buildQuery` always puts
+    /// the real `Task: `/`Details: ` prefixes at the very start of
+    /// their lines, so an anchored regex isolates them cleanly.
     private static func extractLine(prefixedBy prefix: String, in query: String) -> String? {
-        guard let range = query.range(of: prefix) else { return nil }
-        let after = query[range.upperBound...]
-        if let newline = after.range(of: "\n") {
-            return String(after[..<newline.lowerBound])
+        let escaped = NSRegularExpression.escapedPattern(for: prefix)
+        let pattern = "^\(escaped)(.*)$"
+        let options: NSRegularExpression.Options = [.anchorsMatchLines]
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
+            return nil
         }
-        return String(after)
+        let range = NSRange(query.startIndex..., in: query)
+        guard
+            let match = regex.firstMatch(in: query, range: range),
+            let captureRange = Range(match.range(at: 1), in: query)
+        else {
+            return nil
+        }
+        return String(query[captureRange])
     }
 
     /// `TaskPromotionService.swift:102` formats every proactive task

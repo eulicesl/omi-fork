@@ -178,6 +178,62 @@ final class ExecuteVerificationGateTests: XCTestCase {
         )
     }
 
+    /// Review feedback (Codex P2): the v1 `extractLine` used
+    /// `query.range(of: prefix)` which returns the FIRST substring match
+    /// anywhere in the query. The TASK CONTEXT block has a free-text
+    /// `- Detail:` bullet that can contain a literal `Task: ...` from
+    /// a user's task description. Without line-anchoring the classifier
+    /// pulled the wrong line and — combined with actionable-wins
+    /// semantics — could misclassify the verdict. Pin the anchored
+    /// behavior with a preamble whose context body contains a deceptive
+    /// `Task: ` substring.
+    func testClassifyIgnoresFakeTaskPrefixInsideContextBullet() {
+        let prompted = """
+        # TASK CONTEXT
+        - Detail: Earlier the user said "Task: Send Daniel" — but that's
+          stale context from a prior conversation.
+
+        # EXECUTE
+        Execute this task end-to-end now.
+
+        Task: Summarize the design doc
+        Details: Pull the highlights.
+        """
+        // Pre-fix, extractLine("Task: ") would grab "Send Daniel" from
+        // the context bullet → actionable. After the anchor fix it
+        // correctly reads "Summarize the design doc" from the EXECUTE
+        // block.
+        XCTAssertEqual(
+            ExecuteVerificationGate.classify(query: prompted),
+            .research,
+            "extractLine must be line-anchored — a 'Task: ' substring inside a context bullet must not hijack classification"
+        )
+    }
+
+    func testClassifyIgnoresFakeDetailsPrefixInsideContextBullet() {
+        // Symmetric case: a context bullet contains a literal
+        // "Details: " substring (less common since the singular
+        // "Detail:" is what the context formatter uses, but a user's
+        // free-text description could include it). Must not be picked
+        // up.
+        let prompted = """
+        # TASK CONTEXT
+        - Detail: The user wrote "Details: Send everyone a reply" in a
+          past message, which is no longer relevant.
+
+        # EXECUTE
+        Execute this task end-to-end now.
+
+        Task: Task
+        Details: New task: Look up Daniel's email
+        """
+        XCTAssertEqual(
+            ExecuteVerificationGate.classify(query: prompted),
+            .research,
+            "extractLine must isolate the real Details: line in the EXECUTE block, not the substring inside the context bullet"
+        )
+    }
+
     // MARK: - evaluate(actionClass:invokedToolNames:)
 
     func testEvaluateResearchIsAlwaysVerified() {
