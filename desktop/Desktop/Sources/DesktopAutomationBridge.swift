@@ -184,6 +184,20 @@ struct DesktopAutomationExecuteSpawnRequest: Decodable {
     )
   }
 
+  /// High-confidence host-side intent that doesn't need an LLM turn — e.g.
+  /// "Open Chrome" → `open -a "Google Chrome"`. Returns nil whenever in
+  /// doubt; the caller falls back to the normal agent path. Matches the
+  /// detector the floating-bar Execute button uses, so HTTP automation
+  /// callers get the same fast path as UI clicks.
+  ///
+  /// Notification context is intentionally ignored — see
+  /// `ProactiveTaskExecute.directDesktopAction(...)` for why.
+  var directDesktopAction: ProactiveTaskExecute.DirectDesktopAction? {
+    ProactiveTaskExecute.directDesktopAction(
+      title: notification.title,
+      message: notification.message
+    )
+  }
 }
 
 private struct DesktopAutomationExecuteSpawnResult: Codable {
@@ -481,17 +495,42 @@ final class DesktopAutomationBridge {
   private func dispatchExecuteSpawn(
     _ payload: DesktopAutomationExecuteSpawnRequest
   ) async throws -> DesktopAutomationExecuteSpawnResult {
+    let notificationId = payload.notificationId ?? UUID()
+    let rawModel = payload.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let model = rawModel?.isEmpty == false ? rawModel! : ProactiveTaskExecute.resolveModel()
+
+    // Fast path: deterministic desktop intents (open Chrome / Safari /
+    // Finder / URL in a known browser). Mirrors the floating-bar Execute
+    // button — same detector, same dedup window, same terminal pill
+    // shape. Without this, HTTP automation callers (eval harness,
+    // external integrations) silently bypass the fast path that UI
+    // clicks already get and pay an LLM round trip + refusal risk.
+    if let action = payload.directDesktopAction {
+      let pill = await AgentPillsManager.shared.spawnDirectActionForNotification(
+        notificationId: notificationId,
+        query: payload.query,
+        model: model,
+        title: payload.notification.title,
+        action: action
+      )
+      guard let pill else {
+        throw AutomationError.duplicateExecuteNotification
+      }
+      return DesktopAutomationExecuteSpawnResult(
+        pillId: pill.id.uuidString,
+        notificationId: notificationId.uuidString,
+        model: model
+      )
+    }
+
     return try await MainActor.run {
-      let notificationId = payload.notificationId ?? UUID()
-      let rawModel = payload.model?.trimmingCharacters(in: .whitespacesAndNewlines)
-      let model = rawModel?.isEmpty == false ? rawModel! : ProactiveTaskExecute.resolveModel()
       guard
         let pill = AgentPillsManager.shared.spawnForNotification(
           notificationId: notificationId,
           query: payload.query,
           model: model,
           systemPromptSuffix: ProactiveTaskExecute.systemPromptSuffix,
-          systemPromptPrefix: nil
+          systemPromptPrefix: ChatProvider.floatingBarSystemPromptPrefix
         )
       else {
         throw AutomationError.duplicateExecuteNotification
