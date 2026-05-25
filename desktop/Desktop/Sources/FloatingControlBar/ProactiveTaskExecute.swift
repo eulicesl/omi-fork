@@ -484,14 +484,25 @@ enum ProactiveTaskExecute {
         // Closing brackets — strip only if the URL has more closes than
         // opens of that bracket type. Wikipedia URLs like
         // `/wiki/Foo_(bar)` are balanced and must survive.
-        for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
-            while url.hasSuffix(close) {
-                let opens = url.filter { String($0) == open }.count
-                let closes = url.filter { String($0) == close }.count
-                if closes > opens {
-                    url.removeLast()
-                } else {
-                    break
+        //
+        // Loop until a full pass over all bracket types removes nothing,
+        // so mixed trailing wrappers like `https://example.com)]` (a `)`
+        // from prose wrapping a `]` from prose) get fully cleaned —
+        // single-pass ordering would strip the inner bracket and leave
+        // the outer one behind.
+        var changed = true
+        while changed {
+            changed = false
+            for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+                while url.hasSuffix(close) {
+                    let opens = url.filter { String($0) == open }.count
+                    let closes = url.filter { String($0) == close }.count
+                    if closes > opens {
+                        url.removeLast()
+                        changed = true
+                    } else {
+                        break
+                    }
                 }
             }
         }

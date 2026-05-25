@@ -915,6 +915,57 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Mixed unmatched trailing brackets (Codex P2, fix v13)
+
+    /// Review feedback (Codex P2): `trimTrailingNoise` iterated through
+    /// bracket pairs in a single fixed order, so a mixed wrapper like
+    /// `)]` only stripped the inner `]` and left `)` behind. Loop until
+    /// no bracket is removed so every unmatched closer gets cleaned.
+    func testDirectDesktopActionStripsMixedUnmatchedTrailingBrackets() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://example.com)]"
+            ),
+            .openURL(url: URL(string: "https://example.com")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionStripsMixedUnmatchedTrailingBracketsReversed() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://example.com])"
+            ),
+            .openURL(url: URL(string: "https://example.com")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionStripsAllThreeMixedClosers() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://example.com})]"
+            ),
+            .openURL(url: URL(string: "https://example.com")!, browserName: nil)
+        )
+    }
+
+    func testDirectDesktopActionPreservesMixedBalancedBrackets() {
+        // Both bracket pairs are balanced inside the URL — neither
+        // closer should be stripped, even with the new loop.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open page",
+                message: "Open https://example.com/foo_(bar)[baz]"
+            ),
+            .openURL(
+                url: URL(string: "https://example.com/foo_(bar)[baz]")!,
+                browserName: nil
+            )
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal
