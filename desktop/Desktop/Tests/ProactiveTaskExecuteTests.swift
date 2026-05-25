@@ -745,6 +745,76 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - Expanded follow-up verb deferral (Codex P1, fix v10)
+
+    /// Review feedback (Codex P1 on v9): the multi-step verb list
+    /// omitted common follow-up imperatives — `check`, `read`, `close`,
+    /// `call`, etc. — so phrasings like "Open Chrome. Check email."
+    /// fast-pathed the open and dropped the second instruction.
+    func testDirectDesktopActionDefersOnCheckFollowup() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome. Check email."
+            ),
+            "'Check email' must defer — fast-pathing the open silently drops the second step"
+        )
+    }
+
+    func testDirectDesktopActionDefersOnCloseFollowup() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome. Close Slack."
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnCallFollowup() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open FaceTime to call Daniel"
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnReadFollowup() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Task",
+                message: "Open Chrome. Read the launch notes."
+            )
+        )
+    }
+
+    func testDirectDesktopActionDefersOnPlayPauseStop() {
+        for verb in ["play", "pause", "stop", "restart"] {
+            XCTAssertNil(
+                ProactiveTaskExecute.directDesktopAction(
+                    title: "Task",
+                    message: "Open Music to \(verb) the track"
+                ),
+                "follow-up verb '\(verb)' must defer"
+            )
+        }
+    }
+
+    func testDirectDesktopActionStillFastPathsOnPureResearchVerb() {
+        // Research-y verbs (`find`, `look`, `search`, `view`, `get`)
+        // remain intentionally out of the multi-step set — they tend
+        // to describe a goal *within* the just-opened app, and the
+        // fast-path open is acceptable. Pin so a future "add them
+        // all" reflex catches this trade-off.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Finder",
+                message: "Open Finder to find the budget doc"
+            ),
+            .openApplication(name: "Finder")
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal

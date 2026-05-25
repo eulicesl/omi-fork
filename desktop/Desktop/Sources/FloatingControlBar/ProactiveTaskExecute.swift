@@ -149,7 +149,17 @@ enum ProactiveTaskExecute {
         #"update|change|edit|modify|set|add|"# +
         #"remind|notify|"# +
         #"buy|order|purchase|"# +
-        #"save|download|upload"# +
+        #"save|download|upload|"# +
+        // Common follow-up imperatives flagged in PR review. Deferred
+        // because each is an unambiguous second instruction the agent
+        // path should handle, not the host-side `open(1)` call. Verbs
+        // that double as research/lookup ("find", "look", "search",
+        // "view", "get") are intentionally NOT in this set — those
+        // tend to describe a goal *within* the just-opened app and
+        // fast-path is acceptable.
+        #"check|read|close|call|"# +
+        #"play|pause|stop|start|restart|kill|quit|"# +
+        #"refresh|sync|switch|sign|log"# +
         #")\b"#
 
     /// Inspect a notification's user-meaningful imperative for a
