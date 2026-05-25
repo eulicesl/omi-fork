@@ -863,6 +863,58 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         )
     }
 
+    // MARK: - URL content excluded from scan when app match also exists (Codex P2, fix v12)
+
+    /// Review feedback (Codex P2): the v11 scan only excluded the
+    /// first matched span (the app match when both exist), leaving
+    /// the URL in `scanText`. Path tokens like `/this-and-that` or
+    /// `/send/` then false-tripped `multiStepPattern`'s `\band\b` and
+    /// `\bsend\b`, deferring legitimate browser+URL intents. The
+    /// scan now redacts every matched span (app AND URL) so URL
+    /// content can't false-trip.
+    func testDirectDesktopActionBrowserAppPlusUrlNotTrippedByUrlPathConjunction() {
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Chrome",
+                message: "Open https://example.com/this-and-that in Chrome"
+            ),
+            .openURL(
+                url: URL(string: "https://example.com/this-and-that")!,
+                browserName: "Google Chrome"
+            ),
+            "URL path token 'and' must not trigger multi-step deferral when paired with a browser app match"
+        )
+    }
+
+    func testDirectDesktopActionBrowserAppPlusUrlNotTrippedByUrlPathVerb() {
+        // `/send/` inside a URL path used to match `\bsend\b` in the
+        // multi-step pattern when paired with a browser app match.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Chrome",
+                message: "Open https://example.com/api/send/v1 in Chrome"
+            ),
+            .openURL(
+                url: URL(string: "https://example.com/api/send/v1")!,
+                browserName: "Google Chrome"
+            )
+        )
+    }
+
+    func testDirectDesktopActionMultipleMatchSpansAllExcludedFromScan() {
+        // Both spans get redacted — no false-trip on either side.
+        XCTAssertEqual(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Open Safari",
+                message: "Open https://example.com/post/share-and-create in Safari"
+            ),
+            .openURL(
+                url: URL(string: "https://example.com/post/share-and-create")!,
+                browserName: "Safari"
+            )
+        )
+    }
+
     // MARK: - URL trailing-punctuation stripping (Codex P2, fix v4)
 
     /// Review feedback (Codex P2): `\S+` greedily includes terminal

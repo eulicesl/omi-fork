@@ -271,22 +271,18 @@ enum ProactiveTaskExecute {
         //    summary"` + `message: "Open Chrome"` (no conjunction, work
         //    appears *before* the open phrase) also defers.
         //
-        // The scan excludes the matched span itself so URL content with
-        // literal "and"/"send" in a path (e.g. ".../this-and-that",
-        // "/send/") doesn't false-trip the deferral.
+        // The scan excludes EVERY matched span — app match AND URL match
+        // when both are present — so URL path tokens like
+        // `/this-and-that` or `/send/` can't false-trip the deferral
+        // when paired with a browser-app match like "Open Chrome".
         //
         // Conservative-by-design: a false positive (deferring something we
         // could have fast-pathed) just costs an LLM round trip; a false
         // negative silently drops user-requested work.
-        let nsIntent = intentText as NSString
-        let matchedRange: NSRange = {
-            if let appMatch { return appMatch.range }
-            if let urlMatch { return urlMatch.range }
-            return NSRange(location: 0, length: 0)
-        }()
-        let beforeText = nsIntent.substring(to: matchedRange.location)
-        let afterText = nsIntent.substring(from: NSMaxRange(matchedRange))
-        let scanText = beforeText + " " + afterText
+        let scanText = redactedScanText(
+            from: intentText,
+            excluding: (appMatches + urlMatches).map { $0.range }
+        )
         if scanText.range(
             of: multiStepPattern,
             options: [.regularExpression, .caseInsensitive]
@@ -438,6 +434,38 @@ enum ProactiveTaskExecute {
     /// use `]`). Strip unambiguous sentence punctuation always, and
     /// strip closing brackets only when they're *unmatched* (i.e. there
     /// are more closes than opens in the URL).
+    /// Build a "scan text" from the intent with every matched span
+    /// redacted to a single space. Used by the multi-step / negation
+    /// guards so URL path tokens (e.g. `/this-and-that`, `/send/`) and
+    /// the matched verb phrase itself can't false-trip the scans.
+    ///
+    /// Ranges may overlap or be unsorted; both are handled.
+    private static func redactedScanText(from text: String, excluding ranges: [NSRange]) -> String {
+        let validRanges = ranges
+            .compactMap { Range($0, in: text) }
+            .sorted { $0.lowerBound < $1.lowerBound }
+        guard !validRanges.isEmpty else { return text }
+
+        var result = ""
+        var cursor = text.startIndex
+        for range in validRanges {
+            // Already past this range from a previous (overlapping) one.
+            guard range.lowerBound >= cursor else {
+                cursor = max(cursor, range.upperBound)
+                continue
+            }
+            if cursor < range.lowerBound {
+                result.append(contentsOf: text[cursor..<range.lowerBound])
+            }
+            result.append(" ")
+            cursor = range.upperBound
+        }
+        if cursor < text.endIndex {
+            result.append(contentsOf: text[cursor..<text.endIndex])
+        }
+        return result
+    }
+
     private static func trimTrailingNoise(from rawURL: String) -> String {
         var url = rawURL
         // Strip-always set is intentionally narrow: only characters that
