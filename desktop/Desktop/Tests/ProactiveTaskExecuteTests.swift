@@ -148,8 +148,7 @@ final class ProactiveTaskExecuteTests: XCTestCase {
     func testDirectDesktopActionDetectsOpenChromeTask() {
         let action = ProactiveTaskExecute.directDesktopAction(
             title: "Open Chrome",
-            message: "Open Google Chrome so I can continue browsing.",
-            context: nil
+            message: "Open Google Chrome so I can continue browsing."
         )
         XCTAssertEqual(action, .openApplication(name: "Google Chrome"))
     }
@@ -157,8 +156,7 @@ final class ProactiveTaskExecuteTests: XCTestCase {
     func testDirectDesktopActionDetectsUrlInChromeTask() {
         let action = ProactiveTaskExecute.directDesktopAction(
             title: "Open docs",
-            message: "Open https://react.dev/learn in Chrome",
-            context: nil
+            message: "Open https://react.dev/learn in Chrome"
         )
         XCTAssertEqual(
             action,
@@ -169,8 +167,7 @@ final class ProactiveTaskExecuteTests: XCTestCase {
     func testDirectDesktopActionMapsReactDocsRequestToReactURL() {
         let action = ProactiveTaskExecute.directDesktopAction(
             title: "Task",
-            message: "Open the React docs in Chrome",
-            context: nil
+            message: "Open the React docs in Chrome"
         )
         XCTAssertEqual(
             action,
@@ -181,8 +178,7 @@ final class ProactiveTaskExecuteTests: XCTestCase {
     func testDirectDesktopActionDetectsSafari() {
         let action = ProactiveTaskExecute.directDesktopAction(
             title: "Open Safari",
-            message: "Launch Safari",
-            context: nil
+            message: "Launch Safari"
         )
         XCTAssertEqual(action, .openApplication(name: "Safari"))
     }
@@ -190,8 +186,7 @@ final class ProactiveTaskExecuteTests: XCTestCase {
     func testDirectDesktopActionDetectsFinder() {
         let action = ProactiveTaskExecute.directDesktopAction(
             title: "Open Finder",
-            message: "Show me Finder",
-            context: nil
+            message: "Show me Finder"
         )
         XCTAssertEqual(action, .openApplication(name: "Finder"))
     }
@@ -206,10 +201,62 @@ final class ProactiveTaskExecuteTests: XCTestCase {
         ]
         for (title, message) in nilCases {
             XCTAssertNil(
-                ProactiveTaskExecute.directDesktopAction(title: title, message: message, context: nil),
+                ProactiveTaskExecute.directDesktopAction(title: title, message: message),
                 "expected no direct-action match for: \(title)"
             )
         }
+    }
+
+    /// Review feedback (Gemini, P1): the prior detector mixed
+    /// notification-context fields (sourceApp, reasoning, detail…) into the
+    /// trigger string. A "Summarize the tabs I have open in Chrome" task
+    /// whose context happens to mention "open" + "chrome" would get
+    /// hijacked. The detector must now key strictly on title + message.
+    func testDirectDesktopActionDoesNotTriggerOnAmbientChromeMention() {
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Summarize my tabs",
+                message: "Give me a one-line summary of each tab I have open in Chrome right now."
+            ),
+            "the verb 'open' here describes a state, not an imperative — must defer to the agent"
+        )
+
+        XCTAssertNil(
+            ProactiveTaskExecute.directDesktopAction(
+                title: "Draft an email",
+                message: "Write Daniel a reply about the launch I'm planning."
+            ),
+            "'launch' as a noun in a draft task must not trigger the fast path"
+        )
+    }
+
+    /// Review feedback (Gemini, P1): "Open https://example.dev in Safari"
+    /// used to find the URL but set browserName=nil — routing to the system
+    /// default browser instead of Safari. Safari must be detected alongside
+    /// Chrome.
+    func testDirectDesktopActionRoutesUrlToSafariWhenRequested() {
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open docs",
+            message: "Open https://example.dev in Safari"
+        )
+        XCTAssertEqual(
+            action,
+            .openURL(url: URL(string: "https://example.dev")!, browserName: "Safari")
+        )
+    }
+
+    func testDirectDesktopActionLeavesBrowserNilWhenUnspecified() {
+        // No browser mentioned → defer to the system default browser via
+        // open(1)'s no-app form. Encoded so a future "always pick Chrome"
+        // regression gets caught.
+        let action = ProactiveTaskExecute.directDesktopAction(
+            title: "Open the docs",
+            message: "Open https://example.dev"
+        )
+        XCTAssertEqual(
+            action,
+            .openURL(url: URL(string: "https://example.dev")!, browserName: nil)
+        )
     }
 
     func testCompletionActivityTextDoesNotTruncateFinalMessage() {
@@ -223,5 +270,22 @@ final class ProactiveTaskExecuteTests: XCTestCase {
     func testCompletionActivityTextFallsBackToDoneOnEmptyInput() {
         XCTAssertEqual(ProactiveTaskExecute.completionActivityText(from: ""), "Done")
         XCTAssertEqual(ProactiveTaskExecute.completionActivityText(from: "   \n  "), "Done")
+    }
+
+    /// Review feedback (Gemini P1 / Codex P2): a failed direct action must
+    /// surface as a `.failed` pill rather than a misleading `.done`. The
+    /// contract that makes that possible is `perform(_:)` throwing on a
+    /// non-zero `open(1)` exit. Pins that contract — if it ever stops
+    /// throwing for an unknown app, `spawnDirectActionForNotification`
+    /// silently regresses to "lying success" without any test failing.
+    func testPerformThrowsForUnknownApplication() async {
+        let unknownAppName = "OmiFastpathTestNonexistentApp987"
+        do {
+            _ = try await ProactiveTaskExecute.perform(.openApplication(name: unknownAppName))
+            XCTFail("perform should throw for an unknown application")
+        } catch {
+            // Expected. Error message comes from open(1)'s non-zero exit,
+            // which we surface back to the user verbatim.
+        }
     }
 }

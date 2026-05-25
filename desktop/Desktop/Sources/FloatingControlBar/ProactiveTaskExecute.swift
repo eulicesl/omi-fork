@@ -110,50 +110,79 @@ enum ProactiveTaskExecute {
         case openURL(url: URL, browserName: String?)
     }
 
-    /// Inspect a notification's title/message/context for a high-confidence
-    /// "open X" intent. Returns nil whenever in doubt — the agent path is
-    /// always the fallback, so a missed match merely degrades to today's
-    /// behavior. A false positive would surprise the user, so the matcher
-    /// only fires when the verbs *and* targets are unambiguous.
+    /// Inspect a notification's user-meaningful imperative for a
+    /// high-confidence "open X" intent. Returns nil whenever in doubt — the
+    /// agent path is always the fallback, so a missed match merely degrades
+    /// to today's behavior. A false positive would surprise the user, so
+    /// the matcher only fires when the verbs *and* targets are unambiguous.
+    ///
+    /// Scope note: we deliberately ignore `FloatingBarNotificationContext`
+    /// (`sourceApp`, `windowTitle`, `reasoning`, `detail`, …) — those are
+    /// observational, not the user's stated intent. Including them led to
+    /// false positives like "Summarize the tabs I have **open** in
+    /// **Chrome**" hijacking the fast path. The `title` and `message` carry
+    /// the imperative; nothing else.
     static func directDesktopAction(
         title: String,
-        message: String,
-        context: FloatingBarNotificationContext? = nil
+        message: String
     ) -> DirectDesktopAction? {
-        let combined = [
-            title,
-            message,
-            context?.sourceApp ?? "",
-            context?.windowTitle ?? "",
-            context?.contextSummary ?? "",
-            context?.currentActivity ?? "",
-            context?.reasoning ?? "",
-            context?.detail ?? "",
-        ]
-        .joined(separator: " ")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+        let intentText = (title + " " + message)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = intentText.lowercased()
+        let nsLower = lower as NSString
+        let fullRange = NSRange(location: 0, length: nsLower.length)
 
-        let lower = combined.lowercased()
-        guard lower.contains("open") || lower.contains("launch") else { return nil }
+        // Strict adjacency guard. The verb ("open"/"launch") must sit next
+        // to a recognized target, separated only by a small filler word
+        // ("up", "the", "a"). Rejects descriptive uses like
+        // "tabs I have open in Chrome" or "the launch I'm planning" —
+        // those have "open"/"launch" in the text but not as an imperative
+        // adjacent to a known target.
+        let appPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(google chrome|chrome|safari|finder|react docs)\b"#
+        let urlPattern = #"\b(?:open|launch)(?:\s+(?:up|the|a))?\s+(https?://\S+)"#
 
-        let browserName = lower.contains("chrome") || lower.contains("google chrome")
-            ? "Google Chrome"
-            : nil
-        if let url = firstURL(in: combined) {
-            return .openURL(url: url, browserName: browserName)
-        }
-        if lower.contains("react") && lower.contains("docs") {
-            return .openURL(url: URL(string: "https://react.dev")!, browserName: browserName)
+        let appMatch = (try? NSRegularExpression(pattern: appPattern))?
+            .firstMatch(in: lower, range: fullRange)
+        let urlMatch = (try? NSRegularExpression(pattern: urlPattern))?
+            .firstMatch(in: lower, range: fullRange)
+        guard appMatch != nil || urlMatch != nil else { return nil }
+
+        // Pick the requested browser. With the guard above we know the
+        // user used an imperative; a mentioned browser name now reliably
+        // signals routing intent (e.g. "Open https://x in Safari").
+        let browserName: String?
+        if lower.contains("chrome") || lower.contains("google chrome") {
+            browserName = "Google Chrome"
+        } else if lower.contains("safari") {
+            browserName = "Safari"
+        } else {
+            browserName = nil
         }
 
-        if lower.contains("google chrome") || lower.contains("chrome") {
-            return .openApplication(name: "Google Chrome")
+        // "open <URL>" — primary target is the URL itself; the app phrase
+        // (if also present) just picks the browser via `browserName`.
+        if let urlMatch, let urlRange = Range(urlMatch.range(at: 1), in: lower) {
+            if let url = URL(string: String(lower[urlRange])) {
+                return .openURL(url: url, browserName: browserName)
+            }
         }
-        if lower.contains("safari") {
-            return .openApplication(name: "Safari")
-        }
-        if lower.contains("finder") {
-            return .openApplication(name: "Finder")
+
+        // Otherwise the user explicitly named an app. Route by the exact
+        // target the regex captured, so an incidental link in the body
+        // never overrides an explicit app open.
+        if let appMatch, let targetRange = Range(appMatch.range(at: 1), in: lower) {
+            switch String(lower[targetRange]) {
+            case "google chrome", "chrome":
+                return .openApplication(name: "Google Chrome")
+            case "safari":
+                return .openApplication(name: "Safari")
+            case "finder":
+                return .openApplication(name: "Finder")
+            case "react docs":
+                return .openURL(url: URL(string: "https://react.dev")!, browserName: browserName)
+            default:
+                return nil
+            }
         }
         return nil
     }

@@ -377,10 +377,14 @@ final class AgentPillsManager: ObservableObject {
 
     /// Direct-action variant of `spawnForNotification`: runs a deterministic
     /// host-side action (e.g. `open -a "Google Chrome"`) without an LLM turn,
-    /// then surfaces a terminal `.done` pill describing what happened. Shares
-    /// the same dedup window as `spawnForNotification` so a double-click can't
+    /// then surfaces a terminal pill describing what happened. Shares the
+    /// same dedup window as `spawnForNotification` so a double-click can't
     /// launch Chrome twice — and so the second click doesn't quietly fall
     /// back to the LLM path either.
+    ///
+    /// On a non-zero exit from `/usr/bin/open` the pill lands as `.failed`,
+    /// not `.done`, so the UI / status snapshot don't claim success for a
+    /// launch that didn't happen.
     @discardableResult
     func spawnDirectActionForNotification(
         notificationId: UUID,
@@ -400,29 +404,38 @@ final class AgentPillsManager: ObservableObject {
         }
 
         let activity: String
+        let status: AgentPill.Status
         do {
             activity = try await ProactiveTaskExecute.perform(action)
+            status = .done
         } catch {
-            activity = "Failed: \(error.localizedDescription)"
+            let reason = error.localizedDescription
+            activity = "Failed: \(reason)"
+            status = .failed(reason)
         }
         return spawnCompletedDirectAction(
             query: query,
             model: model,
             title: title,
-            activity: activity
+            activity: activity,
+            status: status
         )
     }
 
     /// Create a terminal pill for deterministic host-side actions that have
-    /// already run. No ChatProvider, no agent session — we just want a `.done`
-    /// pill so the user sees a record of "Opened Google Chrome." alongside
-    /// their other Execute history.
+    /// already run. No ChatProvider, no agent session — we just want a
+    /// finished pill (`.done` on success, `.failed` on a non-zero exit) so
+    /// the user sees a record of what happened alongside their other Execute
+    /// history. `status` defaults to `.done` to keep the success-path call
+    /// sites short; callers that ran a process pass through the actual
+    /// outcome.
     @discardableResult
     func spawnCompletedDirectAction(
         query: String,
         model: String,
         title: String,
-        activity: String
+        activity: String,
+        status: AgentPill.Status = .done
     ) -> AgentPill {
         let pill = AgentPill(query: query, model: model, isExecuteMode: true)
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -438,7 +451,7 @@ final class AgentPillsManager: ObservableObject {
             }
         }
 
-        pill.status = .done
+        pill.status = status
         pill.latestActivity = ProactiveTaskExecute.completionActivityText(from: activity)
         pill.completedAt = Date()
         pill.attemptCount = 1

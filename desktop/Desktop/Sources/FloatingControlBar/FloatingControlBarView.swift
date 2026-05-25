@@ -233,11 +233,14 @@ struct FloatingControlBarView: View {
                         // Safari, Finder, or a URL in a known browser). Routing
                         // these through the LLM only adds latency and refusal
                         // risk — we already know the exact `open(1)` invocation.
+                        // The detector intentionally ignores notification
+                        // context (sourceApp, reasoning, …) because those are
+                        // observational, not the user's stated intent — see
+                        // ProactiveTaskExecute.directDesktopAction docs.
                         // Falls through to the agent path when no direct match.
                         if let action = ProactiveTaskExecute.directDesktopAction(
                             title: notification.title,
-                            message: notification.message,
-                            context: notification.context
+                            message: notification.message
                         ) {
                             let notificationId = notification.id
                             let titleForPill = notification.title
