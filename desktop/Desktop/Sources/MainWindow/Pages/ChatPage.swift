@@ -131,7 +131,30 @@ struct ChatPage: View {
       // Messages area
       messagesView
 
-      // Error banner
+      // PR 4: structured ChatErrorCard for mappable BridgeError cases.
+      // Renders ABOVE the legacy errorMessage banner so its primary
+      // CTA gets the prominent slot. Only one of {card, banner} is
+      // ever active per turn — sendMessage's catch block clears the
+      // other when setting one.
+      if let cardState = chatProvider.currentError {
+        ChatErrorCard(
+          state: cardState,
+          onRecover: {
+            Task { await chatProvider.recoverFromError() }
+          },
+          onDismiss: {
+            chatProvider.dismissCurrentError()
+          }
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+      }
+
+      // Legacy error banner — fallback for unmappable BridgeError
+      // cases (encodingError, quotaExceeded, free-form .agentError
+      // messages). Stays during the PR 4 migration window so no
+      // error path becomes invisible while we wire up the card
+      // recovery actions piece by piece.
       if let error = chatProvider.errorMessage {
         HStack(spacing: 8) {
           Image(systemName: "exclamationmark.triangle.fill")

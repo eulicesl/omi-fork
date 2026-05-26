@@ -517,6 +517,26 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     @Published var isClearing = false
     @Published var errorMessage: String?
 
+    // MARK: - PR 4 ChatErrorState (replacement of inline error banner)
+    //
+    // Structured error state for the chat surface. Drives the new
+    // ChatErrorCard view. Coexists with the legacy `errorMessage`
+    // banner during the migration: mappable BridgeError cases set
+    // `currentError` and clear `errorMessage`; unmappable cases
+    // (encoding, quota, agent errors with free-form messages) keep
+    // falling back to the legacy banner.
+    //
+    // Paywall sheets (`isClaudeAuthRequired`, `needsBrowserExtensionSetup`,
+    // `showOmiThresholdAlert`) are deliberately NOT migrated — they're
+    // product flows, not error recovery surfaces (per roadmap PR 4
+    // scope notes).
+    @Published var currentError: ChatErrorState?
+
+    /// Captured at the start of each sendMessage so the .retry recovery
+    /// action can re-issue the user's last prompt. Cleared after a
+    /// successful re-send or on dismiss to avoid stale retries.
+    private var lastFailedPrompt: String?
+
     /// Monotonically-incremented id for each sendMessage / stopAgent cycle.
     /// Watchdog tasks capture their gen and only reset state if it still
     /// matches — so a watchdog fired by a stuck send #N won't cancel a
@@ -3295,11 +3315,30 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 )
             }
 
-            // Show error to user (unless they intentionally stopped)
+            // Show error to user (unless they intentionally stopped).
+            //
+            // PR 4: prefer structured ChatErrorState card when the
+            // error maps cleanly. Falls through to the legacy
+            // errorMessage banner for unmappable BridgeError cases
+            // (encodingError, quotaExceeded, .agentError with a free-
+            // form message). Both surfaces coexist during the
+            // migration — only one is active at a time per turn.
             if let bridgeError = error as? BridgeError, case .stopped = bridgeError {
-                // User stopped — no error to show
+                // User stopped — no error to show, but the card system
+                // still surfaces .interrupted so users can resume.
+                if let card = ChatErrorState.from(bridgeError) {
+                    currentError = card
+                    lastFailedPrompt = trimmedText
+                    errorMessage = nil
+                }
+            } else if let bridgeError = error as? BridgeError,
+                      let card = ChatErrorState.from(bridgeError) {
+                currentError = card
+                lastFailedPrompt = trimmedText
+                errorMessage = nil
             } else {
                 errorMessage = error.localizedDescription
+                currentError = nil  // ensure the card is dismissed if it was up
             }
         }
 
@@ -3751,6 +3790,51 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         turnIdByMessageId.removeAll()
         firstTokenAtMsByTurnId.removeAll()
         stallEventCountByTurnId.removeAll()
+    }
+
+    // MARK: - PR 4: ChatErrorState recovery dispatch
+
+    /// User tapped the primary CTA on a `ChatErrorCard`. Dispatches to
+    /// the matching recovery action and clears `currentError`.
+    ///
+    /// V1 wires `.retry` (re-issue last prompt) and `.dismiss` (clear).
+    /// `.signIn` / `.openSettings` / `.installRuntime` / `.switchMode`
+    /// land as no-ops with a log line — the underlying flows already
+    /// exist (Settings sheet, the Claude auth paywall, etc.) but
+    /// hooking them up to the card requires UI plumbing decisions
+    /// the replacement PR explicitly defers per the design tradeoffs
+    /// flagged in commit `e417c2414`. Future PR wires them.
+    func recoverFromError() async {
+        guard let error = currentError else { return }
+        let action = error.primaryRecovery
+        let promptToRetry = lastFailedPrompt
+        currentError = nil
+        lastFailedPrompt = nil
+
+        switch action {
+        case .retry:
+            if let prompt = promptToRetry, !prompt.isEmpty {
+                await sendMessage(prompt)
+            }
+        case .dismiss:
+            break  // already cleared above
+        case .signIn:
+            log("ChatErrorCard: .signIn recovery requested — auth path wiring deferred to follow-up PR")
+        case .openSettings:
+            log("ChatErrorCard: .openSettings recovery requested — settings open wiring deferred to follow-up PR")
+        case .installRuntime:
+            log("ChatErrorCard: .installRuntime recovery requested — runtime install wiring deferred to follow-up PR")
+        case .switchMode:
+            log("ChatErrorCard: .switchMode recovery requested — bridge-mode toggle wiring deferred to follow-up PR")
+        }
+    }
+
+    /// User tapped the dismiss "x" on a `ChatErrorCard`. Clears the
+    /// card without firing any recovery action. Used when the user
+    /// wants to acknowledge the error and move on without retrying.
+    func dismissCurrentError() {
+        currentError = nil
+        lastFailedPrompt = nil
     }
 
     // MARK: - Clear Chat

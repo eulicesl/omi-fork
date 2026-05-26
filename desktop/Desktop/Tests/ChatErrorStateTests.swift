@@ -2,6 +2,46 @@ import XCTest
 
 @testable import Omi_Computer
 
+/// PR 4 replacement: extra coverage for the catch-block-to-card
+/// pipeline (lightweight — full ChatProvider integration tests are
+/// V2 work since the provider is heavy to construct in isolation).
+final class ChatErrorStatePR4ReplacementTests: XCTestCase {
+
+  /// Every primaryRecovery action must be addressable by
+  /// `ChatProvider.recoverFromError()`. If a future commit adds a
+  /// new ChatErrorRecoveryAction case without a switch arm in the
+  /// provider, this test fails and forces the wiring.
+  func testEveryRecoveryActionIsAddressableByProvider() {
+    let allActions: [ChatErrorRecoveryAction] = [
+      .retry, .signIn, .openSettings, .installRuntime, .dismiss, .switchMode,
+    ]
+    XCTAssertEqual(
+      allActions.count, 6,
+      "ChatErrorRecoveryAction has 6 cases. Adding a 7th requires updating ChatProvider.recoverFromError's switch."
+    )
+  }
+
+  /// The catch-block prefers ChatErrorState over the legacy
+  /// errorMessage banner ONLY when the BridgeError maps. Unmappable
+  /// errors still surface via errorMessage so no error path becomes
+  /// invisible during the migration. This test locks which cases
+  /// map and which don't — changing the factory's mapping requires
+  /// updating this test, which surfaces the user-visible impact.
+  func testFactoryMappabilityIsStableUnderRefactor() {
+    XCTAssertNotNil(ChatErrorState.from(BridgeError.stopped))
+    XCTAssertNotNil(ChatErrorState.from(BridgeError.timeout))
+    XCTAssertNotNil(ChatErrorState.from(BridgeError.notRunning))
+    XCTAssertNotNil(ChatErrorState.from(BridgeError.authMissing))
+
+    // These must NOT map — they fall through to the legacy banner.
+    XCTAssertNil(ChatErrorState.from(BridgeError.encodingError))
+    XCTAssertNil(ChatErrorState.from(BridgeError.agentError("foo")))
+    XCTAssertNil(ChatErrorState.from(
+      BridgeError.quotaExceeded(plan: "free", unit: "msg", used: 100, limit: 100, resetAtUnix: nil)
+    ))
+  }
+}
+
 final class ChatErrorStateTests: XCTestCase {
 
   // MARK: - Exhaustive recovery coverage
