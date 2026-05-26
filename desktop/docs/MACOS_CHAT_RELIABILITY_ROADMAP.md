@@ -758,3 +758,48 @@ These are recorded here once provisioned. Do not start PR 7 until these are pres
 - [Pending] Chat Unavailable Shown (placeholder) — `https://us.posthog.com/project/302298/insights/J38pgyjd`
 - [Pending] Chat Scroll Stuck Detected (placeholder) — `https://us.posthog.com/project/302298/insights/TQbRGiCG`
 - [Pending] tool-call/agent-query START events (placeholder) — `https://us.posthog.com/project/302298/insights/mJZBso3r`
+
+---
+
+## V1 code-complete checkpoint (2026-05-26)
+
+What's landed in this branch (`feature/macos-chat-reliability-80`) as of the checkpoint commit:
+
+| PR | Status | Notes |
+|---|---|---|
+| 0a Telemetry + privacy contract | shipped | runtime-verified; `set-but-equals-dev-literal` salt branch unit-tested only |
+| 0b Fake bridge harness | shipped | 11 scenarios; 100-run determinism contract green |
+| 1 Stall detection | shipped | actor + heartbeat-aware (PR 8 extension merged in) |
+| 2 Empty-state / starter prompt honesty | shipped | |
+| 3 Tool-call timeout + interrupt | shipped | `withToolTimeout` refactored to unstructured `CheckedContinuation` per Gemini review |
+| 4 Error recovery UX | shipped | `.retry` + `.dismiss` wired; `.signIn`/`.openSettings`/`.installRuntime`/`.switchMode` are log-only no-ops until V2 polish |
+| 5 `saveMessage` vs poll race | shipped | `PendingSaveCounter` brackets at 5 sites |
+| 6 Prompt ↔ schema regression tests | shipped | regex broadened to `[a-z0-9_\-]+` per Gemini review |
+| 7 Scenario / eval tests | **scaffolded** | harness + 2 example scenarios + seed/teardown scripts. **Runtime driver + 6 remaining scenarios are follow-up work; see open questions below.** |
+| 8 Bridge heartbeat protocol | shipped | 5s/12s defaults; `lastUpstreamEventMs` initialised at top of `withHeartbeat` per Gemini review |
+| 9 Threshold tuning | **tooling ready, calendar-gated** | `desktop/scripts/tune-thresholds.py` pulls PostHog data + emits recommendations. Cannot run until ≥5 days of post-PR 0a telemetry have accumulated. |
+
+### Remaining calendar gates (V1 exit blockers)
+
+These cannot be accelerated by code:
+- **PR 0a dashboard live for ≥7 days** post-PR 8 merge.
+- **PR 7 nightly suite green 7 consecutive runs** in both modes.
+- **PR 9 threshold tuning** based on ≥5 days of telemetry.
+
+### PR 7 open design questions (before runtime driver lands)
+
+The scaffolding in `desktop/Desktop/Tests/Scenarios/` and the seed scripts in `desktop/scripts/` are documentation-as-code. Four decisions are needed before the runner is wired:
+
+1. **Firestore ↔ local SQLite mirror.** Chat reads from a VM-side SQLite mirror populated by `AgentSyncService`, not Firestore directly. The seed script writes to Firestore (matching the roadmap's text); whether scenarios see the data depends on whether the runner also triggers a sync, or whether seeding should additionally write the local GRDB tables. **Decision needed before scenario #1 is wired.**
+2. **Subcollection name for screenshots.** Seed script uses `screenshots`; backend `SCREEN_ACTIVITY_COLLECTION = 'screen_activity'` exists too. May be different concepts — verify before scenario #4 (semantic search) is wired.
+3. **Driver mechanism.** AX-based via `agent-swift` (closer to user flow, depends on UI snapshot stability) vs in-process Swift bridge harness (faster, flake-free, but bypasses the chat-surface bindings PR 4 hardens). Roadmap text implies `agent-swift`; confirm before runner work.
+4. **Mode-switching CLI.** No CLI exists today to flip `chatBridgeMode` from outside the app — either add `omi-ctl set-bridge-mode <mode>` (matching the existing `omi-ctl navigate` pattern) or drive Settings via `agent-swift`.
+
+### PR 9 known limitation
+
+`tune-thresholds.py` computes `slowGapMs` / `stalledGapMs` from `totalMs` (whole-turn duration), because the PR 0a `chat.turn.completed` payload doesn't carry the per-turn inter-event-gap distribution. A follow-up telemetry change (emit `maxInterEventGapMs` per turn) would let PR 9 tune those constants directly rather than via proxy. Per-tool timeouts can't be tuned from current payload (carries `toolNames[]` but not per-tool durations) — flagged as out-of-band manual analysis in the script's output.
+
+### PR 4 follow-ups (non-blocking)
+
+- `.signIn` / `.openSettings` / `.installRuntime` / `.switchMode` recovery actions are currently log-only no-ops. Wiring them to existing handlers is V2 polish.
+- End-to-end `agent-swift` verification of each error path through the named bundle is a follow-up exercise.
