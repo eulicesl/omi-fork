@@ -815,14 +815,26 @@ final class AgentPillsManager: ObservableObject {
             pill.status = .running
         }
 
-        let activity = describeActivity(for: aiMessage)
+        let activity = Self.describeActivity(for: aiMessage)
         if !activity.isEmpty && activity != pill.latestActivity {
             pill.latestActivity = activity
             pill.transcript.append(activity)
         }
     }
 
-    private func describeActivity(for message: ChatMessage) -> String {
+    /// Pill-bar activity string for an AI message. Skips streaming text
+    /// blocks: while the model is mid-generation, partial chunks like
+    /// `"O"`, `"Op"`, `"Open"` would each become a new `latestActivity`
+    /// value, and the pill bar (`lineLimit(1)`) renders that as
+    /// `"O…"` / `"Op…"` / `"Open"` flickering — the "B…/typin…" bug
+    /// reported in the floating-bar screenshots. Tool calls still flow
+    /// because they're atomic once invoked. Once `isStreaming` flips
+    /// false, the final text takes over via the next `handle` callback
+    /// or via `complete()`.
+    ///
+    /// Static + internal so it can be unit-tested without touching
+    /// AgentPillsManager's singleton state.
+    static func describeActivity(for message: ChatMessage) -> String {
         for block in message.contentBlocks.reversed() {
             switch block {
             case .toolCall(_, let name, _, _, let input, _):
@@ -832,6 +844,8 @@ final class AgentPillsManager: ObservableObject {
                 }
                 return display
             case .text(_, let text):
+                // Suppress mid-stream text — see doc comment above.
+                guard !message.isStreaming else { continue }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     return String(trimmed.prefix(110))
@@ -840,8 +854,11 @@ final class AgentPillsManager: ObservableObject {
                 continue
             }
         }
+        // Fallback: use message.text only when the message has finished
+        // streaming. While streaming, return "Working…" so the bar shows
+        // a stable label until tools or final text arrive.
         let trimmedFallback = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedFallback.isEmpty {
+        if !message.isStreaming, !trimmedFallback.isEmpty {
             return String(trimmedFallback.prefix(110))
         }
         return "Working…"

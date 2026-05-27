@@ -1,5 +1,7 @@
 {
-  "unreleased": [],
+  "unreleased": [
+    "Fixed floating-bar agent pills showing truncated mid-stream tokens (e.g. \"B\u2026\" / \"typin\u2026\") while running"
+  ],
   "releases": [
     {
       "version": "0.11.421",
