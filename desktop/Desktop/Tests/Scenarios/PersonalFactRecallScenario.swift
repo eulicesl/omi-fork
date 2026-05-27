@@ -50,56 +50,12 @@ enum PersonalFactRecallScenario: ChatScenario {
   /// Hard ceiling on scenario duration. Anything past this is a `.failed`.
   static let timeoutSeconds: Int = 30
 
-  // MARK: - Runtime driver (the "HOW") — TODO
+  // MARK: - Runtime driver
 
+  /// Capability-flavored scenario: depends on real auth + real LLM
+  /// stack via the runner. The runner currently returns `.skipped`
+  /// until Phase 2 auth bootstrap lands. See ChatScenarioRunner.
   static func run(in mode: BridgeMode) async throws -> ChatScenarioOutcome {
-    // TODO(runner): Wire this to `agent-swift` against the named bundle.
-    //
-    // Sketch of the future driver (rough — flag names finalised when the
-    // runner PR lands):
-    //
-    //   1. Pre-flight:
-    //        agent-swift doctor
-    //        agent-swift connect --bundle-id com.omi.omi-chat-reliability
-    //      Skip if either fails (return .skipped with the reason).
-    //
-    //   2. Ensure the right `bridgeMode` is selected. The cheapest path
-    //      is the automation CLI (see desktop/CLAUDE.md):
-    //        ./scripts/omi-ctl set-bridge-mode \(mode.rawValue)
-    //      Until that subcommand exists, drive the Settings UI via
-    //      `agent-swift` + the existing snapshot/click flow.
-    //
-    //   3. Navigate to chat + send the prompt:
-    //        ./scripts/omi-ctl navigate chat
-    //        agent-swift fill <chat-input-ref> "\(userPrompt)"
-    //        agent-swift press <send-button-ref>
-    //
-    //   4. Wait for the assistant turn to terminate (poll the turn-state
-    //      ledger from PR 11, or fall back to `agent-swift wait text` on
-    //      the final-message anchor). Bounded by `timeoutSeconds`.
-    //
-    //   5. Pull the recorded tool-call payload from the local turn
-    //      ledger (or scrape `/private/tmp/omi-dev.log`) and assert:
-    //        - exactly one `execute_sql` call
-    //        - the SQL string references `expectedSqlTable`
-    //
-    //   6. Pull the assistant's final message text and assert:
-    //        - non-empty
-    //        - contains every entry in `expectedResponseKeywords`
-    //          (case-insensitive)
-    //
-    //   7. Stamp `durationMs` from wall-clock start → terminal check.
-    //
-    // Until the runner lands, the scenario reports `.skipped` so it can
-    // be enumerated by the nightly harness without failing the build.
-    let startedAt = Date()
-    let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-
-    return ChatScenarioOutcome(
-      scenarioId: Self.id,
-      mode: mode,
-      outcome: .skipped(reason: "runner_not_implemented"),
-      durationMs: durationMs
-    )
+    await ChatScenarioRunner.runScenario(Self.self, in: mode, flavor: .capability)
   }
 }

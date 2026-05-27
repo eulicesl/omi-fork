@@ -83,31 +83,12 @@ enum EmptyResultGracefulScenario: ChatScenario {
   /// Hard ceiling on scenario duration.
   static let timeoutSeconds: Int = 30
 
-  // MARK: - Runtime driver (the "HOW") — TODO
+  // MARK: - Runtime driver
 
+  /// Capability-flavored scenario: depends on real auth + real LLM
+  /// stack via the runner. The runner currently returns `.skipped`
+  /// until Phase 2 auth bootstrap lands. See ChatScenarioRunner.
   static func run(in mode: BridgeMode) async throws -> ChatScenarioOutcome {
-    // TODO(runner): Wire this to `agent-swift` against the named bundle.
-    //
-    // Same driver sketch as PersonalFactRecallScenario, with these
-    // scenario-specific assertions in step 6:
-    //
-    //   - Final message line count <= `maxResponseLines`.
-    //   - Final message contains at least one entry from
-    //     `acknowledgmentPhrases` (case-insensitive).
-    //   - Final message contains none of `forbiddenPhrases`.
-    //   - Tool call (if any) referenced the memories table with the
-    //     sentinel in the WHERE clause — i.e. the model actually tried
-    //     to look it up instead of refusing without searching.
-    //
-    // Until the runner lands, the scenario reports `.skipped`.
-    let startedAt = Date()
-    let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-
-    return ChatScenarioOutcome(
-      scenarioId: Self.id,
-      mode: mode,
-      outcome: .skipped(reason: "runner_not_implemented"),
-      durationMs: durationMs
-    )
+    await ChatScenarioRunner.runScenario(Self.self, in: mode, flavor: .capability)
   }
 }
