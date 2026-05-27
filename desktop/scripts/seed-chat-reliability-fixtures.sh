@@ -2,14 +2,20 @@
 # seed-chat-reliability-fixtures.sh — seed deterministic Firestore fixtures
 # for the PR 7 chat-reliability scenario suite.
 #
-# Seeds six fixtures (all tagged `source: "chat-reliability-fixture"`) under
-# the dedicated eval Firebase UID:
+# Seeds five Firestore fixtures (all tagged `source: "chat-reliability-fixture"`)
+# under the dedicated eval Firebase UID. Reach chat via the
+# Firestore -> API (getActionItems/getMemories) -> local SQLite -> sync -> VM
+# pipeline; runner triggers TasksStore.loadTasks() + AgentSyncService.syncTick()
+# at scenario start.
 #   1. memory                — "User Eulices is testing chat reliability fixtures"
 #   2. active action_item    — "Verify scenario suite [chat-reliability-fixture]"
 #   3. completed action_item — "Set up chat-reliability fixtures [chat-reliability-fixture]"
 #   4. no-result sentinel    — action_item containing "ZZZ_NO_RESULTS_SENTINEL_XYZ_unique_string_99999"
-#   5. semantic-search       — screenshots doc with ocrText about ML research notes
-#   6. daily-recap           — action_item created today
+#   5. daily-recap           — action_item created today
+#
+# The semantic-search fixture (scenario #4) lives in local SQLite only —
+# screenshots are local-first; no Firestore->local pull path exists. Seeded
+# in-process by ChatReliabilityFixtures.seedScreenshotFixture() (Swift).
 #
 # SAFETY:
 #   - Hardcodes the V1 eval UID (rg0PvY9mhKRARcYxkHHYh4iAkc12). Personal account;
@@ -37,9 +43,13 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--help]
 
-Seeds six deterministic Firestore fixtures for the PR 7 chat-reliability
+Seeds five deterministic Firestore fixtures for the PR 7 chat-reliability
 scenario suite. All fixtures carry source="${FIXTURE_TAG}" so the companion
 teardown script can wipe them safely.
+
+(The semantic-search screenshot fixture is seeded in-process by the
+runner via ChatReliabilityFixtures.swift, not here — screenshots are
+local-first and have no Firestore->local pull path.)
 
 Guards (script exits non-zero with a clear message if any fail):
   - backend/google-credentials.json must exist at ${CREDS}
@@ -51,7 +61,6 @@ What it writes (under users/${EVAL_UID}/...):
   action_items/<id>  — active task
   action_items/<id>  — completed task
   action_items/<id>  — no-result sentinel
-  screenshots/<id>   — ocrText fixture for semantic search
   action_items/<id>  — daily-recap item created today
 
 Idempotent: any docs already tagged source="${FIXTURE_TAG}" inside the eval
@@ -124,7 +133,10 @@ except ValueError:
     pass
 db = firestore.client()
 
-# Subcollections that may carry the fixture tag.
+# Subcollections that may carry the fixture tag. `screenshots` retained
+# here (not in the seed path below) because earlier seed runs may have
+# written there; the idempotent cleanup pass should still find and remove
+# those stale fixtures even though new runs no longer write them.
 SUBCOLLECTIONS = ["memories", "action_items", "screenshots"]
 
 user_ref = db.collection("users").document(uid)
@@ -209,21 +221,15 @@ write("action_items", sentinel_id, {
     ),
 })
 
-# (e) Semantic-search fixture
-search_id = new_id("search")
-write("screenshots", search_id, {
-    "id": search_id,
-    "ocrText": (
-        "fixture: scenario-test-search-document about machine learning "
-        "research notes"
-    ),
-    "appName": "FixtureApp",
-    "windowTitle": "chat-reliability-fixture",
-    "timestamp": now_iso,
-    "createdAt": now_iso,
-})
+# NOTE: the semantic-search fixture (scenario #4) is NOT seeded here.
+# Screenshots in the desktop app are local-first (captured by Rewind into
+# local SQLite, then pushed UP to the VM via AgentSyncService). There is
+# no Firestore -> local pull path for screenshots, so seeding a Firestore
+# `screenshots/<id>` doc would never reach chat. The scenario runner seeds
+# that fixture via the Swift helper ChatReliabilityFixtures.seedScreenshotFixture()
+# instead, which writes directly to local SQLite via GRDB.
 
-# (f) Daily-recap fixture (action_item created today)
+# (e) Daily-recap fixture (action_item created today)
 recap_id = new_id("recap")
 write("action_items", recap_id, {
     "id": recap_id,
@@ -241,8 +247,11 @@ print(f"  memory             = {mem_id}")
 print(f"  active task        = {active_task_id}")
 print(f"  completed task     = {done_task_id}")
 print(f"  no-result sentinel = {sentinel_id}")
-print(f"  semantic search    = {search_id}")
 print(f"  daily recap        = {recap_id}")
+print()
+print("Screenshots fixture (scenario #4) is seeded by the in-process")
+print("runner via ChatReliabilityFixtures.seedScreenshotFixture() — not")
+print("here. See desktop/Desktop/Tests/Scenarios/ChatReliabilityFixtures.swift.")
 PY
 
 echo
