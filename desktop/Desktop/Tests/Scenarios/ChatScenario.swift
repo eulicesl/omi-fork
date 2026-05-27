@@ -20,16 +20,23 @@ import Foundation
 //
 // -----------------------------------------------------------------------
 // Roadmap inventory — 8 scenarios per mode (piMono + userClaude), from
-// `desktop/docs/MACOS_CHAT_RELIABILITY_ROADMAP.md` § PR 7:
+// `desktop/docs/MACOS_CHAT_RELIABILITY_ROADMAP.md` § PR 7. All
+// scaffolded; the runner (ChatScenarioRunner) currently returns
+// `.skipped` for both flavors until execution paths are wired:
 //
-//   1. Personal fact recall                    — PersonalFactRecallScenario.swift   (scaffolded)
-//   2. Daily recap                             — TODO
-//   3. Task create / list / complete           — TODO
-//   4. Semantic search                         — TODO
-//   5. Empty-result graceful response          — EmptyResultGracefulScenario.swift  (scaffolded)
-//   6. Stall recovery (PR 1 + PR 3 + PR 4)     — TODO
-//   7. Auth recovery (PR 4)                    — TODO
-//   8. Mode parity (same prompt, both modes)   — TODO
+//   #  Scenario                                File                              Flavor
+//   1. Personal fact recall                    PersonalFactRecallScenario.swift  capability
+//   2. Daily recap                             DailyRecapScenario.swift          capability
+//   3. Task create / list / complete           TaskLifecycleScenario.swift       capability
+//   4. Semantic search                         SemanticSearchScenario.swift      capability
+//   5. Empty-result graceful response          EmptyResultGracefulScenario.swift capability
+//   6. Stall recovery (PR 1 + PR 3 + PR 4)     StallRecoveryScenario.swift       behavioral
+//   7. Auth recovery (PR 4)                    AuthRecoveryScenario.swift        behavioral
+//   8. Mode parity (same prompt, both modes)   ModeParityScenario.swift          capability
+//
+// Capability scenarios need real auth bootstrap + Firestore fixtures +
+// VM reachability. Behavioral scenarios run against FakeAgentBridge
+// only — no auth, no VM, no network.
 //
 // Each scenario emits a `chat.scenario.run` telemetry event with payload
 // `ChatScenarioRunPayload { scenarioId, mode, outcome, durationMs }` —
