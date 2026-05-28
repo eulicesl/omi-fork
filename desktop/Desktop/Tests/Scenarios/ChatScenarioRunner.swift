@@ -138,13 +138,13 @@ enum ChatScenarioRunner {
   /// would let a scenario run and fail mid-flight with a confusing
   /// error, so the bar for `true` is high.
   static func detectPrerequisites() async -> Prerequisites {
-    // Auth bootstrap: the test process needs a UserDefaults
-    // auth_userId for the eval UID. Without it, AuthService.shared
-    // can't sign API requests.
-    let userDefaults = UserDefaults.standard
-    let signedInUid = userDefaults.string(forKey: "auth_userId")
-    let evalUid = "rg0PvY9mhKRARcYxkHHYh4iAkc12"  // V1 locked value
-    let hasAuthBootstrap = (signedInUid == evalUid)
+    // Auth bootstrap: delegate to AuthBootstrap which inspects the
+    // auth-dump file, populates UserDefaults if present, and
+    // configures Firebase. `.ready` is the only status that unblocks
+    // capability scenarios; anything else surfaces a precise skip
+    // reason via the bootstrap result.
+    let bootstrapResult = await AuthBootstrap.bootstrap()
+    let hasAuthBootstrap = (bootstrapResult.status == .ready)
 
     // Fixture seeding: heuristic — does the local screenshots table
     // contain a row tagged with our fixture appName? Cheap query and
