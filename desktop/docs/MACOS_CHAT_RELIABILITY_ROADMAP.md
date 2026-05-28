@@ -775,7 +775,7 @@ What's landed in this branch (`feature/macos-chat-reliability-80`) as of the che
 | 4 Error recovery UX | shipped | `.retry` + `.dismiss` wired; `.signIn`/`.openSettings`/`.installRuntime`/`.switchMode` are log-only no-ops until V2 polish |
 | 5 `saveMessage` vs poll race | shipped | `PendingSaveCounter` brackets at 5 sites |
 | 6 Prompt ↔ schema regression tests | shipped | regex broadened to `[a-z0-9_\-]+` per Gemini review |
-| 7 Scenario / eval tests | **scaffolded** | harness + 2 example scenarios + seed/teardown scripts. **Runtime driver + 6 remaining scenarios are follow-up work; see open questions below.** |
+| 7 Scenario / eval tests | **partial** | All 8 scenarios scaffolded. Behavioral #6 stall-recovery + #7 auth-recovery **green** in both modes (4/4 tests). Capability scenarios skip with a precise reason via `AuthBootstrap`; unblock playbook in the Phase 2 section below. |
 | 8 Bridge heartbeat protocol | shipped | 5s/12s defaults; `lastUpstreamEventMs` initialised at top of `withHeartbeat` per Gemini review |
 | 9 Threshold tuning | **tooling ready, calendar-gated** | `desktop/scripts/tune-thresholds.py` pulls PostHog data + emits recommendations. Cannot run until ≥5 days of post-PR 0a telemetry have accumulated. |
 
@@ -803,3 +803,19 @@ The scaffolding in `desktop/Desktop/Tests/Scenarios/` and the seed scripts in `d
 
 - `.signIn` / `.openSettings` / `.installRuntime` / `.switchMode` recovery actions are currently log-only no-ops. Wiring them to existing handlers is V2 polish.
 - End-to-end `agent-swift` verification of each error path through the named bundle is a follow-up exercise.
+
+### Phase 2 — Capability scenario unblock playbook
+
+Behavioral scenarios (#6 stall, #7 auth) run today against `FakeAgentBridge`. The 6 capability scenarios (#1-#5, #8) need the test process to be auth-bootstrapped so they can hit the real backend + VM. `AuthBootstrap` + `AuthBootstrapProbeTests` are in place; the operator's manual steps:
+
+1. **Sign into the named bundle once.** Launch `OMI_APP_NAME="omi-chat-reliability" ./run.sh`, sign in as the V1 eval UID (`rg0PvY9mhKRARcYxkHHYh4iAkc12`).
+2. **Capture the session.** `./desktop/scripts/omi-auth-dump.sh com.omi.omi-chat-reliability` writes `desktop/tmp/desktop-auth.json` with the live `auth_*` keys.
+3. **Run the probe.** `xcrun swift test --filter AuthBootstrapProbeTests --package-path desktop/Desktop` — look for the `[AuthBootstrap]` line in test output. `status=ready` means capability scenarios can proceed; any other status names the exact blocker.
+4. **Run capability scenarios within ~1h** before the captured idToken expires. Re-dump if it does (idTokens have a ~1h lifetime; refreshTokens stay valid longer but the bootstrap doesn't currently mint new idTokens).
+
+Remaining capability-scenario work after auth is bootstrapped:
+- A ChatProvider DI seam (or test-friendly composition) so the runner can instantiate it with mocked-vs-real dependencies as scenarios dictate. ChatProvider's heavy lazy-init makes this non-trivial.
+- Driving real `TasksStore.loadTasks()` + `AgentSyncService.syncTick()` to pull Firestore fixtures into local SQLite + push to the VM before assertions.
+- Per-scenario assertion logic on `ChatProvider` observables (messages, currentError, tool-call status).
+
+These are larger than this session can swallow — they're real V2/V3 work, not a "few-hours" extension.
