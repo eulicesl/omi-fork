@@ -1,6 +1,7 @@
 {
   "unreleased": [
-    "Fixed floating-bar agent pills showing truncated mid-stream tokens (e.g. \"B\u2026\" / \"typin\u2026\") while running"
+    "Fixed floating-bar agent pills showing truncated mid-stream tokens (e.g. \"B\u2026\" / \"typin\u2026\") while running",
+    "Execute now waits out transient AI rate limits and retries instead of failing the task"
   ],
   "releases": [
     {

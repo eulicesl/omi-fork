@@ -369,4 +369,41 @@ final class ExecuteVerificationGateTests: XCTestCase {
         // Plain old "agent said this task is impossible" — not retryable.
         XCTAssertFalse(AgentPillsManager.isRetryableErrorText("That contact isn't in your address book."))
     }
+
+    /// Regression: a 429 surfaces as the bridge's mapped "AI service is busy…"
+    /// string. It must be retryable — the bug that produced 0/30 on the eval
+    /// was this exact string being classified as terminal.
+    @MainActor
+    func testRateLimitErrorsAreRetryable() {
+        XCTAssertTrue(AgentPillsManager.isRetryableErrorText("AI service is busy. Please try again in a moment."))
+        XCTAssertTrue(AgentPillsManager.isRetryableErrorText("AI service is temporarily unavailable. Please try again later."))
+        XCTAssertTrue(AgentPillsManager.isRetryableErrorText("turn_end ERROR: 429 Rate limit exceeded"))
+        XCTAssertTrue(AgentPillsManager.isRetryableErrorText("model overloaded"))
+    }
+
+    @MainActor
+    func testRateLimitClassificationIsNarrowerThanRetryable() {
+        // Rate-limit family → long backoff.
+        XCTAssertTrue(AgentPillsManager.isRateLimitErrorText("AI service is busy. Please try again in a moment."))
+        XCTAssertTrue(AgentPillsManager.isRateLimitErrorText("AI service is temporarily unavailable. Please try again later."))
+        XCTAssertTrue(AgentPillsManager.isRateLimitErrorText("429 Rate limit exceeded"))
+        // Retryable but NOT a rate limit → short backoff, not a 15s wait.
+        XCTAssertFalse(AgentPillsManager.isRateLimitErrorText("pi-mono process exited (code 134)"))
+        XCTAssertFalse(AgentPillsManager.isRateLimitErrorText("connection reset by peer"))
+        // Billing cap must never count as a rate limit (would wait pointlessly).
+        XCTAssertFalse(AgentPillsManager.isRateLimitErrorText("You've reached your monthly free-tier limit. Upgrade to keep chatting."))
+    }
+
+    @MainActor
+    func testRetryBackoffOrdering() {
+        // Rate limit waits out the limiter window; transient is a short pause;
+        // gate/verification have no transport problem, so retry immediately.
+        XCTAssertEqual(AgentPillsManager.retryBackoff(for: .rateLimited, attempt: 2), .seconds(15))
+        XCTAssertEqual(AgentPillsManager.retryBackoff(for: .transient, attempt: 2), .seconds(2))
+        XCTAssertEqual(AgentPillsManager.retryBackoff(for: .gate, attempt: 2), .zero)
+        XCTAssertEqual(AgentPillsManager.retryBackoff(for: .verification, attempt: 2), .zero)
+        // Exponential + capped if the retry budget is ever raised.
+        XCTAssertEqual(AgentPillsManager.retryBackoff(for: .rateLimited, attempt: 3), .seconds(30))
+        XCTAssertEqual(AgentPillsManager.retryBackoff(for: .rateLimited, attempt: 10), .seconds(60))
+    }
 }

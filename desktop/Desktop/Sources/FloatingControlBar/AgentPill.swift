@@ -567,12 +567,27 @@ final class AgentPillsManager: ObservableObject {
             // agents" path keeps single-shot semantics so a transient bridge
             // blip doesn't silently double LLM cost).
             let maxAttempts = pill.isExecuteMode ? 2 : 1
+            // Why the previous attempt asked for a retry — drives the backoff
+            // below. Rate limits need a real wall-clock wait; gate/verification
+            // failures don't (no transport problem), so they retry immediately.
+            var pendingRetryReason: RetryReason?
             for attempt in 1...maxAttempts {
                 pill.attemptCount = attempt
-                if attempt > 1 {
-                    pill.latestActivity = "Retrying (\(attempt)/\(maxAttempts))…"
-                    pill.transcript.append("Retrying (\(attempt)/\(maxAttempts))")
-                    log("AgentPillsManager: retry \(attempt)/\(maxAttempts) for pill \(pill.id)")
+                if attempt > 1, let reason = pendingRetryReason {
+                    let backoff = Self.retryBackoff(for: reason, attempt: attempt)
+                    let secs = Int(backoff.components.seconds)
+                    if secs > 0 {
+                        pill.latestActivity = reason == .rateLimited
+                            ? "Rate limited — retrying in \(secs)s…"
+                            : "Retrying (\(attempt)/\(maxAttempts)) in \(secs)s…"
+                        pill.transcript.append("Retry \(attempt)/\(maxAttempts) after \(secs)s (\(reason))")
+                        log("AgentPillsManager: backing off \(secs)s before retry \(attempt)/\(maxAttempts) for pill \(pill.id) (reason: \(reason))")
+                        try? await Task.sleep(for: backoff)
+                    } else {
+                        pill.latestActivity = "Retrying (\(attempt)/\(maxAttempts))…"
+                        pill.transcript.append("Retrying (\(attempt)/\(maxAttempts))")
+                        log("AgentPillsManager: retry \(attempt)/\(maxAttempts) for pill \(pill.id)")
+                    }
                 }
                 // Fresh sessionKey on retry so we don't reuse a broken
                 // session. Format must match `pill.id` discoverability —
@@ -593,7 +608,11 @@ final class AgentPillsManager: ObservableObject {
                     provider: provider,
                     sessionKey: sessionKey
                 )
-                if outcome == .terminal || attempt == maxAttempts {
+                switch outcome {
+                case .terminal: pendingRetryReason = nil
+                case .retry(let reason): pendingRetryReason = reason
+                }
+                if pendingRetryReason == nil || attempt == maxAttempts {
                     break
                 }
                 // Clear provider state between attempts so a stale errorMessage
@@ -608,8 +627,13 @@ final class AgentPillsManager: ObservableObject {
         return pill
     }
 
+    /// Why a finished attempt wants another try. Sizes the retry backoff:
+    /// rate limits wait out the limiter window, generic transient transport
+    /// errors get a short pause, gate/verification failures retry immediately.
+    enum RetryReason: Equatable { case rateLimited, transient, gate, verification }
+
     /// Verdict on a single send attempt — does the retry loop continue?
-    enum AttemptOutcome { case terminal, retry }
+    enum AttemptOutcome: Equatable { case terminal, retry(RetryReason) }
 
     /// Decide whether the attempt that just finished is good enough to ship
     /// (`.terminal`) or should be retried (`.retry`). Non-Execute pills are
@@ -627,8 +651,11 @@ final class AgentPillsManager: ObservableObject {
 
         if let errText = provider.errorMessage, !errText.isEmpty {
             // Retry only on transient transport errors. User stops + model-
-            // reported impossibility are terminal.
-            return Self.isRetryableErrorText(errText) ? .retry : .terminal
+            // reported impossibility are terminal. Rate-limit (429) errors are
+            // retryable but need a longer backoff — flag them so the loop waits
+            // out the limiter window instead of retrying straight into another 429.
+            guard Self.isRetryableErrorText(errText) else { return .terminal }
+            return .retry(Self.isRateLimitErrorText(errText) ? .rateLimited : .transient)
         }
 
         let invoked = Self.invokedToolNames(from: pill.aiMessage)
@@ -639,7 +666,7 @@ final class AgentPillsManager: ObservableObject {
         switch gate {
         case .unverified:
             log("AgentPillsManager: gate flagged pill \(pill.id) as unverified — will retry")
-            return .retry
+            return .retry(.gate)
         case .verified:
             // Local gate passed. For actionable pills, fire the
             // programmatic verification turn on the same warm session for
@@ -659,7 +686,7 @@ final class AgentPillsManager: ObservableObject {
                     return .terminal
                 } else {
                     log("AgentPillsManager: verification turn failed for pill \(pill.id) — evidence: \(result.evidence)")
-                    return .retry
+                    return .retry(.verification)
                 }
             }
             // Verification turn errored / unparseable. Don't infinite-loop —
@@ -720,6 +747,9 @@ final class AgentPillsManager: ObservableObject {
     /// observable from the pill side.
     static func isRetryableErrorText(_ text: String) -> Bool {
         let lower = text.lowercased()
+        // Checked first: a billing/usage cap or a user-stop won't be fixed by
+        // retrying, so they short-circuit even if a retryable marker also matches.
+        if Self.nonRetryableMarkers.contains(where: { lower.contains($0) }) { return false }
         let retryableMarkers = [
             "took too long",         // 180s watchdog
             "process exited",        // BridgeError.processExited
@@ -729,13 +759,57 @@ final class AgentPillsManager: ObservableObject {
             "timeout",
             "connection",
             "stalled",               // Sprint 3 / P9 will produce this
+            // Transient LLM-service pressure (429 / overload). The bridge maps
+            // these to "AI service is busy…" / "…temporarily unavailable…".
+            "busy",
+            "temporarily unavailable",
+            "try again",
+            "rate limit",
+            "overloaded",
+            "resource exhausted",
         ]
-        let nonRetryableMarkers = [
-            "limit reached", "upgrade",   // billing / usage cap
-            "stopped",                    // user pressed stop
-        ]
-        if nonRetryableMarkers.contains(where: { lower.contains($0) }) { return false }
         return retryableMarkers.contains(where: { lower.contains($0) })
+    }
+
+    /// Hard-stop conditions shared by both classifiers: retrying can't help, so
+    /// they must never be treated as retryable nor trigger a rate-limit backoff.
+    static let nonRetryableMarkers = [
+        "limit reached", "upgrade",   // billing / usage cap
+        "stopped",                    // user pressed stop
+    ]
+
+    /// Subset of retryable errors that need a real wall-clock backoff: 429s and
+    /// upstream overload. Billing caps / user stops are excluded so they never
+    /// trigger a long, pointless wait.
+    static func isRateLimitErrorText(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if Self.nonRetryableMarkers.contains(where: { lower.contains($0) }) { return false }
+        let rateLimitMarkers = [
+            "busy", "temporarily unavailable", "rate limit",
+            "overloaded", "resource exhausted",
+        ]
+        return rateLimitMarkers.contains(where: { lower.contains($0) })
+    }
+
+    /// Backoff before a retry attempt, by why the previous attempt failed.
+    /// Rate limits need real wall-clock recovery (the API's per-minute window);
+    /// other transient transport errors get a short pause; gate/verification
+    /// failures are not transport problems, so they retry immediately.
+    ///
+    /// `attempt` is the *upcoming* attempt number (≥ 2 on any real retry).
+    static func retryBackoff(for reason: RetryReason, attempt: Int) -> Duration {
+        switch reason {
+        case .rateLimited:
+            // Exponential by attempt, floored at 15s, capped at 60s. With the
+            // current maxAttempts = 2 this is a single 15s wait; the curve only
+            // matters if the retry budget is ever raised.
+            let secs = min(60, 15 * (1 << max(0, attempt - 2)))
+            return .seconds(secs)
+        case .transient:
+            return .seconds(2)
+        case .gate, .verification:
+            return .zero
+        }
     }
 
     /// Force-dismiss a pill.
