@@ -1711,12 +1711,7 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String devicesFoundNearby(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'APPARATEN',
-      one: 'APPARAAT',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: 'APPARATEN', one: 'APPARAAT');
     return '$count $_temp0 GEVONDEN IN DE BUURT';
   }
 
@@ -9300,4 +9295,7 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get syncCardBackendBusy =>
       'De servers van Omi zijn druk — je opnames worden gesynchroniseerd zodra er weer capaciteit is';
+
+  @override
+  String get unableToDetermineFirmwareVersion => 'Kan de huidige firmwareversie niet bepalen';
 }

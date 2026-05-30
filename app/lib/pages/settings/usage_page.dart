@@ -64,9 +64,11 @@ class _UsagePageState extends State<UsagePage> with TickerProviderStateMixin {
     final provider = context.read<UsageProvider>();
     final localeName = l10n.localeName;
 
-    final RenderRepaintBoundary boundary =
-        _screenshotKeys[_tabController.index].currentContext!.findRenderObject() as RenderRepaintBoundary;
+    final captureContext = _screenshotKeys[_tabController.index].currentContext;
+    if (captureContext == null || !mounted) return;
+    final RenderRepaintBoundary boundary = captureContext.findRenderObject() as RenderRepaintBoundary;
     final ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+    if (!mounted) return;
 
     // Load logo
     final ByteData logoData = await rootBundle.load('assets/images/herologo.png');
@@ -309,7 +311,8 @@ class _UsagePageState extends State<UsagePage> with TickerProviderStateMixin {
       ),
       body: Consumer<UsageProvider>(
         builder: (context, provider, child) {
-          final hasAnyData = provider.todayUsage != null ||
+          final hasAnyData =
+              provider.todayUsage != null ||
               provider.monthlyUsage != null ||
               provider.yearlyUsage != null ||
               provider.allTimeUsage != null;
@@ -1056,7 +1059,10 @@ class _UsagePageState extends State<UsagePage> with TickerProviderStateMixin {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(value, style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: color, height: 1.1)),
+            Text(
+              value,
+              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: color, height: 1.1),
+            ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -1139,8 +1145,8 @@ class _UsagePageState extends State<UsagePage> with TickerProviderStateMixin {
                 builder: (context) {
                   final minutesUsed = (subscription.transcriptionSecondsUsed / 60).round();
                   final minutesLimit = (subscription.transcriptionSecondsLimit / 60).round();
-                  final percentage =
-                      (subscription.transcriptionSecondsUsed / subscription.transcriptionSecondsLimit).clamp(0.0, 1.0);
+                  final percentage = (subscription.transcriptionSecondsUsed / subscription.transcriptionSecondsLimit)
+                      .clamp(0.0, 1.0);
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

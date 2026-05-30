@@ -1712,12 +1712,7 @@ class AppLocalizationsId extends AppLocalizations {
 
   @override
   String devicesFoundNearby(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'PERANGKAT',
-      one: 'PERANGKAT',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: 'PERANGKAT', one: 'PERANGKAT');
     return '$count $_temp0 DITEMUKAN DI SEKITAR';
   }
 
@@ -9194,11 +9189,7 @@ class AppLocalizationsId extends AppLocalizations {
 
   @override
   String syncCardReadyCount(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count rekaman siap disinkronkan',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: '$count rekaman siap disinkronkan');
     return '$_temp0';
   }
 
@@ -9210,11 +9201,7 @@ class AppLocalizationsId extends AppLocalizations {
 
   @override
   String syncCardNeedsAttention(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count rekaman perlu perhatian',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: '$count rekaman perlu perhatian');
     return '$_temp0';
   }
 
@@ -9282,4 +9269,7 @@ class AppLocalizationsId extends AppLocalizations {
   @override
   String get syncCardBackendBusy =>
       'Server Omi sedang sibuk — rekamanmu akan disinkronkan setelah kapasitas tersedia kembali';
+
+  @override
+  String get unableToDetermineFirmwareVersion => 'Tidak dapat menentukan versi firmware saat ini';
 }

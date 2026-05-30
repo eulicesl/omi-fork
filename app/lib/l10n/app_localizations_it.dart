@@ -1713,12 +1713,7 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String devicesFoundNearby(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'DISPOSITIVI',
-      one: 'DISPOSITIVO',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: 'DISPOSITIVI', one: 'DISPOSITIVO');
     return '$count $_temp0 TROVATO/I NELLE VICINANZE';
   }
 
@@ -9327,4 +9322,7 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get syncCardBackendBusy =>
       'I server di Omi sono sovraccarichi — le tue registrazioni verranno sincronizzate appena tornerà disponibile capacità';
+
+  @override
+  String get unableToDetermineFirmwareVersion => 'Impossibile determinare la versione attuale del firmware';
 }

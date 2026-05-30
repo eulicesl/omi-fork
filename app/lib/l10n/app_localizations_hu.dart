@@ -1718,12 +1718,7 @@ class AppLocalizationsHu extends AppLocalizations {
 
   @override
   String devicesFoundNearby(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'ESZKÖZ',
-      one: 'ESZKÖZ',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: 'ESZKÖZ', one: 'ESZKÖZ');
     return '$count $_temp0 TALÁLHATÓ A KÖZELBEN';
   }
 
@@ -9313,4 +9308,7 @@ class AppLocalizationsHu extends AppLocalizations {
   @override
   String get syncCardBackendBusy =>
       'Az Omi szerverei leterheltek — a felvételeid szinkronizálódnak, amint felszabadul a kapacitás';
+
+  @override
+  String get unableToDetermineFirmwareVersion => 'A jelenlegi firmware verziója nem határozható meg';
 }

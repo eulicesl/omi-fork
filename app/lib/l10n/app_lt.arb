@@ -1583,7 +1583,7 @@
     "port": "Prievadas",
     "preferences": "Nuostatos",
     "premiumMinsLeft": "Liko {count} premium minučių.",
-    "premiumMinutesMonth": "1200 premium minučių/mėn. Įrenginyje skirtukas siūlo neribotą nemokamą transkripciją. ",
+    "premiumMinutesMonth": "600 premium minučių/mėn. Įrenginyje skirtukas siūlo neribotą nemokamą transkripciją. ",
     "premiumMinutesUsed": "Premium minutės išnaudotos.",
     "preparingAudioCapture": "Ruošiamas garso įrašymas",
     "preparingFormForYou": "Ruošiama forma jums...",
@@ -3034,5 +3034,6 @@
     },
     "syncProcessingBackgroundHint": "Tai tęsiasi fone — galite išeiti iš šio ekrano.",
     "syncCardRateLimited": "Pasiekta sąžiningo naudojimo riba — sinchronizavimas bus tęsiamas automatiškai",
-    "syncCardBackendBusy": "Omi serveriai užimti — jūsų įrašai bus sinchronizuoti, kai atsilaisvins pajėgumai"
+    "syncCardBackendBusy": "Omi serveriai užimti — jūsų įrašai bus sinchronizuoti, kai atsilaisvins pajėgumai",
+    "unableToDetermineFirmwareVersion": "Nepavyko nustatyti dabartinės programinės aparatinės įrangos versijos"
 }

@@ -61,7 +61,9 @@ class _FirmwareUpdateState extends State<FirmwareUpdate> with FirmwareMixin {
         if (mounted) {
           setState(() {
             shouldUpdate = result.$2;
-            updateMessage = result.$1;
+            updateMessage = widget.device!.firmwareRevision.isEmpty
+                ? context.l10n.unableToDetermineFirmwareVersion
+                : result.$1;
             isLoading = false;
           });
         }

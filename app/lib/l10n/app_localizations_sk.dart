@@ -1711,12 +1711,7 @@ class AppLocalizationsSk extends AppLocalizations {
 
   @override
   String devicesFoundNearby(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'ZARIADENIA',
-      one: 'ZARIADENIE',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: 'ZARIADENIA', one: 'ZARIADENIE');
     return '$count $_temp0 NÁJDENÉ V BLÍZKOSTI';
   }
 
@@ -9266,4 +9261,7 @@ class AppLocalizationsSk extends AppLocalizations {
   @override
   String get syncCardBackendBusy =>
       'Servery Omi sú vyťažené — vaše nahrávky sa zosynchronizujú, hneď ako sa uvoľní kapacita';
+
+  @override
+  String get unableToDetermineFirmwareVersion => 'Nedá sa určiť aktuálna verzia firmvéru';
 }

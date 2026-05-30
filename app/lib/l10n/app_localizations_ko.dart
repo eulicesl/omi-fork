@@ -8311,12 +8311,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String nConversationsCreated(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '대화 $count개 생성됨',
-      one: '대화 1개 생성됨',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: '대화 $count개 생성됨', one: '대화 1개 생성됨');
     return '$_temp0';
   }
 
@@ -9040,11 +9035,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String syncCardReadyCount(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '녹음 $count건 동기화 준비됨',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: '녹음 $count건 동기화 준비됨');
     return '$_temp0';
   }
 
@@ -9056,11 +9047,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String syncCardNeedsAttention(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '확인이 필요한 녹음 $count개',
-    );
+    String _temp0 = intl.Intl.pluralLogic(count, locale: localeName, other: '확인이 필요한 녹음 $count개');
     return '$_temp0';
   }
 
@@ -9125,4 +9112,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get syncCardBackendBusy => 'Omi 서버가 혼잡합니다 — 용량이 확보되는 대로 녹음이 동기화됩니다';
+
+  @override
+  String get unableToDetermineFirmwareVersion => '현재 펌웨어 버전을 확인할 수 없습니다';
 }

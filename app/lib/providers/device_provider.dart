@@ -248,8 +248,9 @@ class DeviceProvider extends ChangeNotifier implements IDeviceServiceSubsciption
     // Throttle notifyListeners to reduce battery drain from excessive UI rebuilds
     // Only notify when: first reading, >=5% change, 15min elapsed, or crosses 20% threshold
     final delta = (_lastNotifiedBatteryLevel - value).abs();
-    final elapsed =
-        _lastBatteryNotifyTime == null ? const Duration(minutes: 999) : currentTime.difference(_lastBatteryNotifyTime!);
+    final elapsed = _lastBatteryNotifyTime == null
+        ? const Duration(minutes: 999)
+        : currentTime.difference(_lastBatteryNotifyTime!);
     final crossedLowBatteryThreshold =
         (value < 20 && _lastNotifiedBatteryLevel >= 20) || (value >= 20 && _lastNotifiedBatteryLevel < 20);
     final shouldNotify =
@@ -406,6 +407,12 @@ class DeviceProvider extends ChangeNotifier implements IDeviceServiceSubsciption
     }
 
     var device = pairedDevice!;
+    if (device.firmwareRevision.isEmpty) {
+      // BLE read of the firmware-revision characteristic failed. Skip the
+      // upgrade check rather than asking the backend what's "newer than
+      // unknown" — that path returns a misleading legacy version.
+      return ('Unable to determine current firmware version', false, '', {});
+    }
     var latestFirmwareDetails = await getLatestFirmwareVersion(
       deviceModelNumber: device.modelNumber,
       firmwareRevision: device.firmwareRevision,
@@ -513,7 +520,8 @@ class DeviceProvider extends ChangeNotifier implements IDeviceServiceSubsciption
         final ringStatus = await connection.getRingStatus();
         if (ringStatus == null || ringStatus.unreadPackets <= 0) return;
         Logger.debug(
-            'DeviceProvider: Ring auto-sync detected ${ringStatus.unreadPackets} unread packets (${ringStatus.usedBytes} bytes)');
+          'DeviceProvider: Ring auto-sync detected ${ringStatus.unreadPackets} unread packets (${ringStatus.usedBytes} bytes)',
+        );
         onOfflineDataDetected?.call(device, ringStatus.unreadPackets, ringStatus.usedBytes);
         return;
       }
