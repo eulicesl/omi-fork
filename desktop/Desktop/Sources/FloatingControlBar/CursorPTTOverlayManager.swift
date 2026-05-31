@@ -23,6 +23,9 @@ final class CursorPTTOverlayManager {
     private var transcriptCancellable: AnyCancellable?
     private var queryCancellable: AnyCancellable?
     private var autoDismissWork: DispatchWorkItem?
+    /// Live subscriptions to the Execute pill spawned from a notification —
+    /// stream its activity/status into the overlay while it runs.
+    private var progressCancellables = Set<AnyCancellable>()
 
     private init() {}
 
@@ -92,11 +95,74 @@ final class CursorPTTOverlayManager {
         autoDismissWork?.cancel()
         cancelResponseSubscriptions()
         transcriptCancellable = nil
+        progressCancellables.removeAll()
         overlayState.displayedQuery = notification.title
         overlayState.streamingText = notification.message
+        // Actionable task notifications get an Execute affordance on the bubble
+        // (reattaching the capability the removed floating-bar button provided).
+        overlayState.executableNotification =
+            ProactiveTaskExecute.isActionable(notification) ? notification : nil
         overlayState.phase = .notifying
         panel?.ignoresMouseEvents = false
         scheduleAutoDismiss(after: 6.0)
+    }
+
+    /// Fired by the bubble's **Execute** button. Routes the current notification
+    /// through the shared `ProactiveTaskExecute.dispatch` and, when an agent
+    /// pill is spawned, streams its progress back into the overlay so the user
+    /// sees "Working… / Rate limited — retrying… / Done — verified" in place.
+    func executeCurrentNotification() {
+        guard let notification = overlayState.executableNotification else { return }
+        overlayState.executableNotification = nil   // consume — hide the button
+        autoDismissWork?.cancel()
+        autoDismissWork = nil
+
+        switch ProactiveTaskExecute.dispatch(notification) {
+        case .spawned(let pill):
+            bindProgress(to: pill)
+        case .directAction:
+            // Deterministic open(1) action fired in the background — it's near
+            // instant, so just acknowledge briefly.
+            overlayState.streamingText = "Working…"
+            overlayState.phase = .notifying
+            panel?.ignoresMouseEvents = true
+            scheduleAutoDismiss(after: 3.0)
+        case .needsPlaywrightSetup, .duplicate, .notActionable:
+            // dispatch already surfaced the setup sheet / deduped — nothing to
+            // show here.
+            dismiss()
+        }
+    }
+
+    /// Stream a spawned Execute pill's activity + terminal result into the
+    /// overlay bubble. Display-only (mouse ignored); auto-dismisses once the
+    /// pill reaches a terminal state.
+    private func bindProgress(to pill: AgentPill) {
+        progressCancellables.removeAll()
+        overlayState.displayedQuery = pill.title
+        overlayState.streamingText = pill.latestActivity
+        overlayState.phase = .notifying
+        panel?.ignoresMouseEvents = true
+
+        pill.$latestActivity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] activity in self?.overlayState.streamingText = activity }
+            .store(in: &progressCancellables)
+
+        pill.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                guard let self else { return }
+                switch status {
+                case .done, .failed:
+                    self.overlayState.streamingText = pill.latestActivity
+                    self.progressCancellables.removeAll()
+                    self.scheduleAutoDismiss(after: 6.0)
+                case .queued, .starting, .running:
+                    break
+                }
+            }
+            .store(in: &progressCancellables)
     }
 
     func dismiss() {
@@ -259,5 +325,7 @@ final class CursorPTTOverlayManager {
         overlayState.streamingText = ""
         overlayState.transcriptText = ""
         overlayState.displayedQuery = ""
+        overlayState.executableNotification = nil
+        progressCancellables.removeAll()
     }
 }

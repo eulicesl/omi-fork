@@ -220,6 +220,28 @@ struct CursorBubbleView: View {
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Execute affordance for actionable task notifications — reattaches
+            // the capability the removed floating-bar button provided. Tapping
+            // runs the agent and streams progress back into this bubble.
+            if state.executableNotification != nil {
+                Button {
+                    CursorPTTOverlayManager.shared.executeCurrentNotification()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Execute")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(accentColor.opacity(0.9))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+            }
         }
         .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
         .padding(.horizontal, 12)

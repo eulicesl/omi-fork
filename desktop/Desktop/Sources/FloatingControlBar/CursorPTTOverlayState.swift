@@ -18,4 +18,9 @@ final class CursorPTTOverlayState: ObservableObject {
     @Published var transcriptText: String = ""
     @Published var displayedQuery: String = ""
     @Published var cursorPosition: CGPoint = .zero
+
+    /// Set while a `.notifying` bubble represents an actionable task — drives
+    /// the **Execute** affordance. Nil for passive (Focus/Insight) alerts and
+    /// once Execute has been tapped (so the button doesn't re-fire).
+    @Published var executableNotification: FloatingBarNotification?
 }
