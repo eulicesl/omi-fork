@@ -117,21 +117,21 @@ struct DesktopAutomationExecuteContext: Decodable {
   }
 
   init(from decoder: Decoder) throws {
-    let c = try decoder.container(keyedBy: CodingKeys.self)
-    sourceTitle = try c.decodeIfPresent(String.self, forKey: .sourceTitle)
-      ?? c.decodeIfPresent(String.self, forKey: .sourceTitleSnake)
-    assistantId = try c.decodeIfPresent(String.self, forKey: .assistantId)
-      ?? c.decodeIfPresent(String.self, forKey: .assistantIdSnake)
-    sourceApp = try c.decodeIfPresent(String.self, forKey: .sourceApp)
-      ?? c.decodeIfPresent(String.self, forKey: .sourceAppSnake)
-    windowTitle = try c.decodeIfPresent(String.self, forKey: .windowTitle)
-      ?? c.decodeIfPresent(String.self, forKey: .windowTitleSnake)
-    contextSummary = try c.decodeIfPresent(String.self, forKey: .contextSummary)
-      ?? c.decodeIfPresent(String.self, forKey: .contextSummarySnake)
-    currentActivity = try c.decodeIfPresent(String.self, forKey: .currentActivity)
-      ?? c.decodeIfPresent(String.self, forKey: .currentActivitySnake)
-    reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning)
-    detail = try c.decodeIfPresent(String.self, forKey: .detail)
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    sourceTitle = try container.decodeIfPresent(String.self, forKey: .sourceTitle)
+      ?? container.decodeIfPresent(String.self, forKey: .sourceTitleSnake)
+    assistantId = try container.decodeIfPresent(String.self, forKey: .assistantId)
+      ?? container.decodeIfPresent(String.self, forKey: .assistantIdSnake)
+    sourceApp = try container.decodeIfPresent(String.self, forKey: .sourceApp)
+      ?? container.decodeIfPresent(String.self, forKey: .sourceAppSnake)
+    windowTitle = try container.decodeIfPresent(String.self, forKey: .windowTitle)
+      ?? container.decodeIfPresent(String.self, forKey: .windowTitleSnake)
+    contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
+      ?? container.decodeIfPresent(String.self, forKey: .contextSummarySnake)
+    currentActivity = try container.decodeIfPresent(String.self, forKey: .currentActivity)
+      ?? container.decodeIfPresent(String.self, forKey: .currentActivitySnake)
+    reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning)
+    detail = try container.decodeIfPresent(String.self, forKey: .detail)
   }
 
   func floatingContext(fallbackTitle: String) -> FloatingBarNotificationContext? {
@@ -169,11 +169,11 @@ struct DesktopAutomationExecuteSpawnRequest: Decodable {
   }
 
   init(from decoder: Decoder) throws {
-    let c = try decoder.container(keyedBy: CodingKeys.self)
-    notification = try c.decode(DesktopAutomationExecuteNotification.self, forKey: .notification)
-    notificationId = try c.decodeIfPresent(UUID.self, forKey: .notificationId)
-      ?? c.decodeIfPresent(UUID.self, forKey: .notificationIdSnake)
-    model = try c.decodeIfPresent(String.self, forKey: .model)
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    notification = try container.decode(DesktopAutomationExecuteNotification.self, forKey: .notification)
+    notificationId = try container.decodeIfPresent(UUID.self, forKey: .notificationId)
+      ?? container.decodeIfPresent(UUID.self, forKey: .notificationIdSnake)
+    model = try container.decodeIfPresent(String.self, forKey: .model)
   }
 
   var query: String {
@@ -215,9 +215,9 @@ private struct DesktopAutomationExecuteStatusRequest: Decodable {
   }
 
   init(from decoder: Decoder) throws {
-    let c = try decoder.container(keyedBy: CodingKeys.self)
-    pillId = try c.decodeIfPresent(String.self, forKey: .pillId)
-      ?? c.decode(String.self, forKey: .pillIdSnake)
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    pillId = try container.decodeIfPresent(String.self, forKey: .pillId)
+      ?? container.decode(String.self, forKey: .pillIdSnake)
   }
 }
 
@@ -513,205 +513,15 @@ final class DesktopAutomationBridge {
   }
 
   private func route(request: HTTPRequest) async -> HTTPResponse {
-    switch (request.method, request.path) {
-    case ("GET", "/health"):
-      let snapshot = await DesktopAutomationStateStore.shared.current()
-      return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
-    case ("GET", "/state"):
-      let snapshot = await DesktopAutomationStateStore.shared.current()
-      return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
-    case ("POST", "/navigate"):
-      do {
-        let payload = try JSONDecoder().decode(
-          DesktopAutomationNavigationRequest.self, from: request.body)
-        try await dispatchNavigation(payload)
-        try await Task.sleep(for: .milliseconds(150))
-        let snapshot = await DesktopAutomationStateStore.shared.current()
-        return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<DesktopAutomationSnapshot>(
-            ok: false,
-            result: nil,
-            error: error.localizedDescription
-          ),
-          statusCode: 400
-        )
-      }
-    case ("POST", "/conversation/open"):
-      do {
-        let payload = try JSONDecoder().decode(
-          DesktopAutomationOpenConversationRequest.self, from: request.body)
-        try await dispatchOpenConversation(payload)
-        try await Task.sleep(for: .milliseconds(350))
-        let snapshot = await DesktopAutomationStateStore.shared.current()
-        return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<DesktopAutomationSnapshot>(
-            ok: false,
-            result: nil,
-            error: error.localizedDescription
-          ),
-          statusCode: 400
-        )
-      }
-    case ("POST", "/execute-export"):
-      struct ExecResult: Codable { let taskTitle: String }
-      do {
-        let payload = try JSONDecoder().decode(
-          DesktopAutomationExecuteExportRequest.self, from: request.body)
-        guard let destination = MemoryExportDestination(rawValue: payload.destination) else {
-          return jsonResponse(
-            DesktopAutomationResponse<ExecResult>(
-              ok: false, result: nil, error: "unknown destination: \(payload.destination)"),
-            statusCode: 400)
-        }
-        let outcome = try await MemoryExportExecutor.run(destination)
-        return jsonResponse(
-          DesktopAutomationResponse(
-            ok: true, result: ExecResult(taskTitle: outcome.taskTitle), error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<ExecResult>(
-            ok: false, result: nil, error: error.localizedDescription),
-          statusCode: 500)
-      }
-    case ("GET", "/actions"):
-      let descriptors = await DesktopAutomationActionRegistry.shared.descriptors()
-      return jsonResponse(DesktopAutomationResponse(ok: true, result: descriptors, error: nil))
-    case ("POST", "/action"):
-      guard let parsed = parseActionRequest(from: request.body) else {
-        return jsonResponse(
-          DesktopAutomationResponse<DesktopAutomationActionResult>(
-            ok: false, result: nil, error: "invalid_action_request"),
-          statusCode: 400
-        )
-      }
-      do {
-        let detail = try await DesktopAutomationActionRegistry.shared.perform(
-          parsed.name, params: parsed.params)
-        try await Task.sleep(for: .milliseconds(150))
-        let snapshot = await DesktopAutomationStateStore.shared.current()
-        let result = DesktopAutomationActionResult(
-          action: parsed.name, detail: detail, state: snapshot)
-        return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<DesktopAutomationActionResult>(
-            ok: false, result: nil, error: error.localizedDescription),
-          statusCode: 400
-        )
-      }
-    case ("POST", "/open-export"):
-      struct OpenResult: Codable { let destination: String }
-      do {
-        let payload = try JSONDecoder().decode(
-          DesktopAutomationExecuteExportRequest.self, from: request.body)
-        guard MemoryExportDestination(rawValue: payload.destination) != nil else {
-          return jsonResponse(
-            DesktopAutomationResponse<OpenResult>(
-              ok: false, result: nil, error: "unknown destination: \(payload.destination)"),
-            statusCode: 400)
-        }
-        await MainActor.run {
-          NSApp.activate()
-          if let window = NSApp.windows.first(where: { $0.title.lowercased().hasPrefix("omi") }) {
-            window.makeKeyAndOrderFront(nil)
-          }
-          NotificationCenter.default.post(
-            name: .desktopAutomationOpenExportRequested, object: nil,
-            userInfo: ["destination": payload.destination])
-        }
-        try await Task.sleep(for: .milliseconds(300))
-        return jsonResponse(
-          DesktopAutomationResponse(
-            ok: true, result: OpenResult(destination: payload.destination), error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<OpenResult>(
-            ok: false, result: nil, error: error.localizedDescription),
-          statusCode: 500)
-      }
-    case ("POST", "/gmail-read"):
-      do {
-        let emails = try await GmailReaderService.shared.readRecentEmails(maxResults: 50)
-        let result = await GmailReaderService.shared.saveAsMemories(emails: emails)
-        struct GmailReadResult: Codable {
-          let emailCount: Int
-          let memoriesSaved: Int
-          let memoriesFailed: Int
-          let emails: [GmailEmailSummary]
-        }
-        struct GmailEmailSummary: Codable {
-          let from: String
-          let subject: String
-          let snippet: String
-          let date: String
-          let isUnread: Bool
-        }
-        let formatter = ISO8601DateFormatter()
-        let summaries = emails.prefix(50).map { e in
-          GmailEmailSummary(
-            from: e.from, subject: e.subject, snippet: e.snippet,
-            date: formatter.string(from: e.date), isUnread: e.isUnread)
-        }
-        let gmailResult = GmailReadResult(
-          emailCount: emails.count,
-          memoriesSaved: result.saved,
-          memoriesFailed: result.failed,
-          emails: summaries
-        )
-        return jsonResponse(DesktopAutomationResponse(ok: true, result: gmailResult, error: nil))
-      } catch {
-        struct ErrorResult: Codable { let message: String }
-        return jsonResponse(
-          DesktopAutomationResponse(ok: false, result: ErrorResult(message: error.localizedDescription), error: error.localizedDescription),
-          statusCode: 500
-        )
-      }
-    case ("POST", "/execute/spawn"):
-      do {
-        let payload = try JSONDecoder().decode(
-          DesktopAutomationExecuteSpawnRequest.self, from: request.body)
-        let result = try await dispatchExecuteSpawn(payload)
-        return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<DesktopAutomationExecuteSpawnResult>(
-            ok: false,
-            result: nil,
-            error: error.localizedDescription
-          ),
-          statusCode: 400
-        )
-      }
-    case ("POST", "/execute/status"):
-      do {
-        let payload = try JSONDecoder().decode(
-          DesktopAutomationExecuteStatusRequest.self, from: request.body)
-        let result = try await dispatchExecuteStatus(payload)
-        return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
-      } catch {
-        return jsonResponse(
-          DesktopAutomationResponse<AgentPillsManager.AutomationSnapshot>(
-            ok: false,
-            result: nil,
-            error: error.localizedDescription
-          ),
-          statusCode: 400
-        )
-      }
-    default:
-      return jsonResponse(
-        DesktopAutomationResponse<DesktopAutomationSnapshot>(
-          ok: false,
-          result: nil,
-          error: "unsupported_route"
-        ),
-        statusCode: 404
-      )
-    }
+    // Dispatch is split across routeCore / routeExecute (in the routing
+    // extension below) so no single switch exceeds the cyclomatic-complexity
+    // limit and the core class body stays within the type-length limit.
+    if let response = await routeCore(request) { return response }
+    if let response = await routeExecute(request) { return response }
+    return jsonResponse(
+      DesktopAutomationResponse<DesktopAutomationSnapshot>(
+        ok: false, result: nil, error: "unsupported_route"),
+      statusCode: 404)
   }
 
   private func dispatchExecuteSpawn(
@@ -909,5 +719,230 @@ extension JSONEncoder {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     return encoder
+  }
+}
+
+// MARK: - HTTP route handlers
+//
+// Extracted from the bridge body into a same-file extension: keeps each
+// dispatch switch within the cyclomatic-complexity limit and the core class
+// body under the type-length limit, while a same-file extension still reaches
+// the bridge's `private` dispatch*/jsonResponse/parseActionRequest helpers.
+extension DesktopAutomationBridge {
+  /// Snapshot / navigation / semantic-action routes.
+  fileprivate func routeCore(_ request: HTTPRequest) async -> HTTPResponse? {
+    switch (request.method, request.path) {
+    case ("GET", "/health"), ("GET", "/state"):
+      return await handleSnapshot()
+    case ("POST", "/navigate"):
+      return await handleNavigate(request.body)
+    case ("POST", "/conversation/open"):
+      return await handleOpenConversation(request.body)
+    case ("GET", "/actions"):
+      return await handleActionsList()
+    case ("POST", "/action"):
+      return await handleAction(request.body)
+    default:
+      return nil
+    }
+  }
+
+  /// Memory-export, Gmail, and Execute-pill routes.
+  fileprivate func routeExecute(_ request: HTTPRequest) async -> HTTPResponse? {
+    switch (request.method, request.path) {
+    case ("POST", "/execute-export"):
+      return await handleExecuteExport(request.body)
+    case ("POST", "/open-export"):
+      return await handleOpenExport(request.body)
+    case ("POST", "/gmail-read"):
+      return await handleGmailRead()
+    case ("POST", "/execute/spawn"):
+      return await handleExecuteSpawn(request.body)
+    case ("POST", "/execute/status"):
+      return await handleExecuteStatus(request.body)
+    default:
+      return nil
+    }
+  }
+
+  private func handleSnapshot() async -> HTTPResponse {
+    let snapshot = await DesktopAutomationStateStore.shared.current()
+    return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
+  }
+
+  private func handleNavigate(_ body: Data) async -> HTTPResponse {
+    do {
+      let payload = try JSONDecoder().decode(DesktopAutomationNavigationRequest.self, from: body)
+      try await dispatchNavigation(payload)
+      try await Task.sleep(for: .milliseconds(150))
+      let snapshot = await DesktopAutomationStateStore.shared.current()
+      return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<DesktopAutomationSnapshot>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 400)
+    }
+  }
+
+  private func handleOpenConversation(_ body: Data) async -> HTTPResponse {
+    do {
+      let payload = try JSONDecoder().decode(DesktopAutomationOpenConversationRequest.self, from: body)
+      try await dispatchOpenConversation(payload)
+      try await Task.sleep(for: .milliseconds(350))
+      let snapshot = await DesktopAutomationStateStore.shared.current()
+      return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<DesktopAutomationSnapshot>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 400)
+    }
+  }
+
+  private func handleExecuteExport(_ body: Data) async -> HTTPResponse {
+    struct ExecResult: Codable { let taskTitle: String }
+    do {
+      let payload = try JSONDecoder().decode(DesktopAutomationExecuteExportRequest.self, from: body)
+      guard let destination = MemoryExportDestination(rawValue: payload.destination) else {
+        return jsonResponse(
+          DesktopAutomationResponse<ExecResult>(
+            ok: false, result: nil, error: "unknown destination: \(payload.destination)"),
+          statusCode: 400)
+      }
+      let outcome = try await MemoryExportExecutor.run(destination)
+      return jsonResponse(
+        DesktopAutomationResponse(
+          ok: true, result: ExecResult(taskTitle: outcome.taskTitle), error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<ExecResult>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 500)
+    }
+  }
+
+  private func handleActionsList() async -> HTTPResponse {
+    let descriptors = await DesktopAutomationActionRegistry.shared.descriptors()
+    return jsonResponse(DesktopAutomationResponse(ok: true, result: descriptors, error: nil))
+  }
+
+  private func handleAction(_ body: Data) async -> HTTPResponse {
+    guard let parsed = parseActionRequest(from: body) else {
+      return jsonResponse(
+        DesktopAutomationResponse<DesktopAutomationActionResult>(
+          ok: false, result: nil, error: "invalid_action_request"),
+        statusCode: 400)
+    }
+    do {
+      let detail = try await DesktopAutomationActionRegistry.shared.perform(
+        parsed.name, params: parsed.params)
+      try await Task.sleep(for: .milliseconds(150))
+      let snapshot = await DesktopAutomationStateStore.shared.current()
+      let result = DesktopAutomationActionResult(
+        action: parsed.name, detail: detail, state: snapshot)
+      return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<DesktopAutomationActionResult>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 400)
+    }
+  }
+
+  private func handleOpenExport(_ body: Data) async -> HTTPResponse {
+    struct OpenResult: Codable { let destination: String }
+    do {
+      let payload = try JSONDecoder().decode(DesktopAutomationExecuteExportRequest.self, from: body)
+      guard MemoryExportDestination(rawValue: payload.destination) != nil else {
+        return jsonResponse(
+          DesktopAutomationResponse<OpenResult>(
+            ok: false, result: nil, error: "unknown destination: \(payload.destination)"),
+          statusCode: 400)
+      }
+      await MainActor.run {
+        NSApp.activate()
+        if let window = NSApp.windows.first(where: { $0.title.lowercased().hasPrefix("omi") }) {
+          window.makeKeyAndOrderFront(nil)
+        }
+        NotificationCenter.default.post(
+          name: .desktopAutomationOpenExportRequested, object: nil,
+          userInfo: ["destination": payload.destination])
+      }
+      try await Task.sleep(for: .milliseconds(300))
+      return jsonResponse(
+        DesktopAutomationResponse(
+          ok: true, result: OpenResult(destination: payload.destination), error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<OpenResult>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 500)
+    }
+  }
+
+  private func handleGmailRead() async -> HTTPResponse {
+    struct GmailReadResult: Codable {
+      let emailCount: Int
+      let memoriesSaved: Int
+      let memoriesFailed: Int
+      let emails: [GmailEmailSummary]
+    }
+    struct GmailEmailSummary: Codable {
+      let from: String
+      let subject: String
+      let snippet: String
+      let date: String
+      let isUnread: Bool
+    }
+    do {
+      let emails = try await GmailReaderService.shared.readRecentEmails(maxResults: 50)
+      let result = await GmailReaderService.shared.saveAsMemories(emails: emails)
+      let formatter = ISO8601DateFormatter()
+      let summaries = emails.prefix(50).map { email in
+        GmailEmailSummary(
+          from: email.from, subject: email.subject, snippet: email.snippet,
+          date: formatter.string(from: email.date), isUnread: email.isUnread)
+      }
+      let gmailResult = GmailReadResult(
+        emailCount: emails.count,
+        memoriesSaved: result.saved,
+        memoriesFailed: result.failed,
+        emails: summaries)
+      return jsonResponse(DesktopAutomationResponse(ok: true, result: gmailResult, error: nil))
+    } catch {
+      struct ErrorResult: Codable { let message: String }
+      return jsonResponse(
+        DesktopAutomationResponse(
+          ok: false, result: ErrorResult(message: error.localizedDescription),
+          error: error.localizedDescription),
+        statusCode: 500)
+    }
+  }
+
+  private func handleExecuteSpawn(_ body: Data) async -> HTTPResponse {
+    do {
+      let payload = try JSONDecoder().decode(DesktopAutomationExecuteSpawnRequest.self, from: body)
+      let result = try await dispatchExecuteSpawn(payload)
+      return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<DesktopAutomationExecuteSpawnResult>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 400)
+    }
+  }
+
+  private func handleExecuteStatus(_ body: Data) async -> HTTPResponse {
+    do {
+      let payload = try JSONDecoder().decode(DesktopAutomationExecuteStatusRequest.self, from: body)
+      let result = try await dispatchExecuteStatus(payload)
+      return jsonResponse(DesktopAutomationResponse(ok: true, result: result, error: nil))
+    } catch {
+      return jsonResponse(
+        DesktopAutomationResponse<AgentPillsManager.AutomationSnapshot>(
+          ok: false, result: nil, error: error.localizedDescription),
+        statusCode: 400)
+    }
   }
 }
