@@ -1043,4 +1043,25 @@ final class ProactiveTaskExecuteTests: XCTestCase {
             // which we surface back to the user verbatim.
         }
     }
+
+    // MARK: - isActionable / dispatch gating (cursor-overlay reattachment)
+
+    func testIsActionableOnlyForTaskNotifications() {
+        XCTAssertTrue(ProactiveTaskExecute.isActionable(
+            FloatingBarNotification(title: "Task", message: "Send Daniel the summary", assistantId: "task")))
+        XCTAssertFalse(ProactiveTaskExecute.isActionable(
+            FloatingBarNotification(title: "Tip", message: "You've been focused 25m", assistantId: "focus")))
+        XCTAssertFalse(ProactiveTaskExecute.isActionable(
+            FloatingBarNotification(title: "Insight", message: "Consider a break", assistantId: "insight")))
+    }
+
+    /// dispatch must no-op on a passive notification — the `isActionable`
+    /// guard runs before any singleton is touched, so no agent is spawned.
+    @MainActor
+    func testDispatchIgnoresPassiveNotification() {
+        let passive = FloatingBarNotification(title: "Tip", message: "x", assistantId: "focus")
+        guard case .notActionable = ProactiveTaskExecute.dispatch(passive) else {
+            return XCTFail("passive notification should return .notActionable")
+        }
+    }
 }

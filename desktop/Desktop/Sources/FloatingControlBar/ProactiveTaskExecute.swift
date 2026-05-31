@@ -627,4 +627,88 @@ FINAL REPORT FORMAT: ONE short sentence — what you did + where. Examples:
 No headers, no lists.
 ================================================================================
 """
+
+    /// Execute is only meaningful for actionable task notifications. Focus /
+    /// Insight (tips) / other passive notifications are informational —
+    /// spawning an agent there makes no sense.
+    static func isActionable(_ notification: FloatingBarNotification) -> Bool {
+        notification.assistantId == "task"
+    }
+
+    /// What `dispatch(_:)` did, so the caller can surface the right UI.
+    /// `.spawned` carries the pill so a progress view can bind to it.
+    enum ExecuteDispatch {
+        case notActionable
+        case directAction
+        case needsPlaywrightSetup
+        case spawned(AgentPill)
+        case duplicate
+    }
+
+    /// Single entry point for the **Execute** action on a task notification.
+    /// Extracted from the floating-bar button so the cursor-overlay
+    /// reattachment (post-#7453) and the legacy button share one path. Mirrors
+    /// the original click handler exactly: deterministic desktop-action fast
+    /// path → P7 preflight → P6-deduped agent spawn, dismissing the
+    /// notification on every terminal branch.
+    @MainActor
+    static func dispatch(_ notification: FloatingBarNotification) -> ExecuteDispatch {
+        guard isActionable(notification) else { return .notActionable }
+
+        let model = resolveModel()
+        let query = buildQuery(
+            title: notification.title,
+            message: notification.message,
+            context: notification.context
+        )
+
+        // Fast path: deterministic desktop intents (open Chrome/Safari/Finder
+        // or a URL in a known browser). Routing these through the LLM only adds
+        // latency and refusal risk. Intentionally ignores notification context
+        // — see `directDesktopAction` docs.
+        if let action = directDesktopAction(
+            title: notification.title,
+            message: notification.message
+        ) {
+            let notificationId = notification.id
+            let titleForPill = notification.title
+            FloatingControlBarManager.shared.dismissCurrentNotification()
+            Task {
+                _ = await AgentPillsManager.shared.spawnDirectActionForNotification(
+                    notificationId: notificationId,
+                    query: query,
+                    model: model,
+                    title: titleForPill,
+                    action: action
+                )
+            }
+            return .directAction
+        }
+
+        // Sprint 3 / P7 — preflight. Only the Playwright-extension case is
+        // blocking; launchTelegram / signIn* are best-effort and fall through
+        // to the agent (its first tool call confirms readiness).
+        let preflight = ExecutePreflight.check(query: query, context: notification.context)
+        switch preflight {
+        case .needs(.installPlaywrightExtension):
+            if let p = FloatingControlBarManager.shared.sharedFloatingProvider {
+                p.needsBrowserExtensionSetup = true
+            }
+            FloatingControlBarManager.shared.dismissCurrentNotification()
+            return .needsPlaywrightSetup
+        case .needs, .ready:
+            break
+        }
+
+        // P6 dedup (60s TTL) — a double-click won't spawn two racing pills.
+        let pill = AgentPillsManager.shared.spawnForNotification(
+            notificationId: notification.id,
+            query: query,
+            model: model,
+            systemPromptSuffix: systemPromptSuffix,
+            systemPromptPrefix: ChatProvider.floatingBarSystemPromptPrefix
+        )
+        FloatingControlBarManager.shared.dismissCurrentNotification()
+        return pill.map(ExecuteDispatch.spawned) ?? .duplicate
+    }
 }
