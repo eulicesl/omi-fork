@@ -121,7 +121,10 @@ struct OnboardingDataSourcesStepView: View {
         ),
         isOn: true,
         isDisabled: coordinator.appleNotesInsightCount > 0,
-        scanFinished: coordinator.appleNotesInsightsFinished,
+        // Reflects both the background scan and a manual folder-select retry;
+        // appleNotesInsightsFinished stays true across a manual re-sync, so use
+        // the in-flight sync flag instead.
+        scanFinished: !coordinator.isSyncingAppleNotes,
         scanFailed: coordinator.appleNotesInsightsFailed,
         actionTitle: coordinator.appleNotesInsightCount > 0 ? nil : "Select Folder",
         action: coordinator.appleNotesInsightCount > 0
