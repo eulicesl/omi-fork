@@ -196,7 +196,11 @@ class AppState: ObservableObject {
       do {
         let metadata = try await APIClient.shared.getTrialMetadata()
         self.trialMetadata = metadata
-        let wasPaywalled = self.isPaywalled
+        // Snapshot the paywall state as observed AFTER the network await resolves
+        // (intentionally not before): if two trial fetches are in flight, whichever
+        // resolves first clears the flag, so the second sees this as false and the
+        // restart hook below fires exactly once instead of double-starting.
+        let paywallWasSetBeforeFetch = self.isPaywalled
         // Local BYOK always wins — never re-block a user who has all four keys
         // configured, regardless of what the (possibly heartbeat-lagged)
         // backend trial state says.
@@ -213,9 +217,13 @@ class AppState: ObservableObject {
         // the flag flip, so without this capture stays paused until a later
         // incidental startMonitoring trigger (e.g. the next app activation),
         // which users perceive as capture taking up to ~a minute to turn on.
-        if wasPaywalled && !self.isPaywalled
+        // Gate on keysAvailable so we never start before the app has the config
+        // it needs (mirrors DesktopHomeView's launch gate); the key-load path
+        // retries otherwise.
+        if paywallWasSetBeforeFetch && !self.isPaywalled
           && AssistantSettings.shared.screenAnalysisEnabled
           && !ProactiveAssistantsPlugin.shared.isMonitoring
+          && APIKeyService.keysAvailable
         {
           log("AppState: paywall lifted — resuming screen analysis monitoring")
           ProactiveAssistantsPlugin.shared.startMonitoring { success, error in

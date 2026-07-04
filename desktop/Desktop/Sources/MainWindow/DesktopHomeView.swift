@@ -249,20 +249,28 @@ struct DesktopHomeView: View {
             .onChange(of: apiKeyService.isLoaded) { loaded in
               guard loaded else { return }
               log("DesktopHomeView: API keys loaded — retrying deferred services")
-              // Backend is now reachable (key fetch succeeded). Force a trial
-              // metadata refresh so a stale sticky `desktop_isPaywalled` flag
-              // restored at launch is cleared promptly instead of waiting for
-              // the 60s poll. fetchTrialMetadata() resumes screen-analysis
-              // monitoring itself once the paywall clears.
-              appState.fetchTrialMetadata()
+              // If a (possibly stale) paywall flag was restored at launch, force a
+              // trial-metadata refresh now that the backend is reachable so it
+              // clears in seconds instead of on the next 60s poll. Its paywall-lift
+              // hook resumes screen-analysis monitoring once the flag clears. Only
+              // fetch when actually paywalled — otherwise the launch-time refresh
+              // already covered it and this would be a redundant API call.
+              if AppState.isPaywalledEffective {
+                appState.fetchTrialMetadata()
+              }
               // Retry transcription
               if AssistantSettings.shared.transcriptionEnabled && !appState.isTranscribing {
                 log("DesktopHomeView: Starting deferred transcription")
                 appState.startTranscription()
               }
-              // Retry screen analysis
+              // Retry screen analysis — but not while paywalled: startMonitoring
+              // would hard-stop and post a spurious "trial expired" popup. When a
+              // stale flag is set, the fetchTrialMetadata() above clears it and its
+              // paywall-lift hook restarts monitoring instead.
               let plugin = ProactiveAssistantsPlugin.shared
-              if AssistantSettings.shared.screenAnalysisEnabled && !plugin.isMonitoring {
+              if AssistantSettings.shared.screenAnalysisEnabled && !plugin.isMonitoring
+                && !AppState.isPaywalledEffective
+              {
                 plugin.startMonitoring { success, error in
                   if success {
                     log("DesktopHomeView: Screen analysis started (after key load)")
