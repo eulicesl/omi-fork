@@ -1,5 +1,7 @@
 {
-  "unreleased": [],
+  "unreleased": [
+    "Chat now shows the thinking indicator instantly when you send a message instead of after a delay on the first message"
+  ],
   "releases": [
     {
       "version": "0.11.423",

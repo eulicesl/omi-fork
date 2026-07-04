@@ -2460,33 +2460,14 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             usageLimiter.recordQuery()
         }
 
-        // Ensure bridge is running
-        guard await ensureBridgeStarted() else {
-            errorMessage = "AI not available"
-            return
-        }
-
-        // Show upgrade prompt if over threshold but don't block the message
-        if bridgeMode != BridgeMode.userClaude.rawValue && omiAICumulativeCostUsd >= 50.0 {
-            showOmiThresholdAlert = true
-        }
-
-        // Determine session ID based on mode
-        // In default chat mode (isInDefaultChat=true): no session ID (compatible with Flutter)
-        // In session mode: require session ID
-        var sessionId: String? = nil
-        if !isInDefaultChat {
-            // Session mode - require a session
-            if currentSession == nil {
-                _ = await createNewSession()
-            }
-            guard let sid = currentSessionId else {
-                errorMessage = "Failed to create chat session"
-                return
-            }
-            sessionId = sid
-        }
-
+        // Flip the sending state ON immediately — before the potentially multi-
+        // second ensureBridgeStarted() cold start below — so the "thinking"
+        // shimmer / typing indicator (gated on isSending) appears the instant the
+        // user submits. Previously isSending was only set after the bridge was
+        // ready, so on the first message users saw no feedback and resubmitted,
+        // thinking the message was dropped. Setting it here also makes the
+        // "already sending" guard above reject those double-submits. Each early
+        // return below resets isSending so a failed send doesn't wedge the input.
         isSending = true
         errorMessage = nil
         sendGeneration += 1
@@ -2508,6 +2489,35 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 self.isStopping = false
                 self.errorMessage = "Response took too long. Try again."
             }
+        }
+
+        // Ensure bridge is running
+        guard await ensureBridgeStarted() else {
+            isSending = false
+            errorMessage = "AI not available"
+            return
+        }
+
+        // Show upgrade prompt if over threshold but don't block the message
+        if bridgeMode != BridgeMode.userClaude.rawValue && omiAICumulativeCostUsd >= 50.0 {
+            showOmiThresholdAlert = true
+        }
+
+        // Determine session ID based on mode
+        // In default chat mode (isInDefaultChat=true): no session ID (compatible with Flutter)
+        // In session mode: require session ID
+        var sessionId: String? = nil
+        if !isInDefaultChat {
+            // Session mode - require a session
+            if currentSession == nil {
+                _ = await createNewSession()
+            }
+            guard let sid = currentSessionId else {
+                isSending = false
+                errorMessage = "Failed to create chat session"
+                return
+            }
+            sessionId = sid
         }
 
         // Wait for staged attachments to finish uploading so we can include their
