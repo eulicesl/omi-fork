@@ -2469,6 +2469,9 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         // "already sending" guard above reject those double-submits. Each early
         // return below resets isSending so a failed send doesn't wedge the input.
         isSending = true
+        // Clear any stale stopping state from a previously interrupted send so the
+        // input controls aren't left disabled / showing a stopping indicator.
+        isStopping = false
         errorMessage = nil
         sendGeneration += 1
         let sendGen = sendGeneration
@@ -2481,7 +2484,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         // by the "already sending" guard. The generation check means the
         // watchdog only fires if no later send has replaced this one.
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 180_000_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 180_000_000_000)
+            } catch {
+                // Sleep was cancelled — don't fire the watchdog.
+                return
+            }
             await MainActor.run {
                 guard let self = self, self.isSending, self.sendGeneration == sendGen else { return }
                 log("ChatProvider: send watchdog fired at 180s — bridge is stuck; force-resetting")
@@ -2494,6 +2502,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         // Ensure bridge is running
         guard await ensureBridgeStarted() else {
             isSending = false
+            isStopping = false
             errorMessage = "AI not available"
             return
         }
@@ -2514,6 +2523,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
             guard let sid = currentSessionId else {
                 isSending = false
+                isStopping = false
                 errorMessage = "Failed to create chat session"
                 return
             }
@@ -2529,6 +2539,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             let ok = await awaitPendingUploads()
             if !ok {
                 isSending = false
+                isStopping = false
                 errorMessage = "Some attachments failed to upload. Remove them and try again."
                 return
             }
