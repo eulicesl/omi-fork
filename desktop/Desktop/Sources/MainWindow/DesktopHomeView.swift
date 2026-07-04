@@ -179,7 +179,14 @@ struct DesktopHomeView: View {
               // Start proactive assistants monitoring if enabled in settings.
               // If API keys aren't loaded yet, this may fail — onChange below retries.
               if settings.screenAnalysisEnabled {
-                if APIKeyService.keysAvailable {
+                if AppState.isPaywalledEffective {
+                  // A (possibly stale) paywall flag is set. Don't call
+                  // startMonitoring — it would hard-stop and post a "trial expired"
+                  // popup, which is spurious for a paid user whose sticky flag was
+                  // restored from a prior session. The trial refresh + paywall-lift
+                  // hook starts monitoring once the flag is confirmed clear.
+                  log("DesktopHomeView: Deferring screen analysis — paywalled at launch")
+                } else if APIKeyService.keysAvailable {
                   ProactiveAssistantsPlugin.shared.startMonitoring { success, error in
                     if success {
                       log("DesktopHomeView: Screen analysis started")
