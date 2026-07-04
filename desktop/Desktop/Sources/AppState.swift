@@ -196,6 +196,7 @@ class AppState: ObservableObject {
       do {
         let metadata = try await APIClient.shared.getTrialMetadata()
         self.trialMetadata = metadata
+        let wasPaywalled = self.isPaywalled
         // Local BYOK always wins — never re-block a user who has all four keys
         // configured, regardless of what the (possibly heartbeat-lagged)
         // backend trial state says.
@@ -205,6 +206,23 @@ class AppState: ObservableObject {
           self.isPaywalled = true
         } else if !metadata.trialExpired && self.isPaywalled {
           self.isPaywalled = false
+        }
+        // If the paywall just lifted — e.g. a stale sticky `desktop_isPaywalled`
+        // flag restored at launch is now cleared by a successful trial fetch —
+        // resume screen-analysis monitoring immediately. Nothing else observes
+        // the flag flip, so without this capture stays paused until a later
+        // incidental startMonitoring trigger (e.g. the next app activation),
+        // which users perceive as capture taking up to ~a minute to turn on.
+        if wasPaywalled && !self.isPaywalled
+          && AssistantSettings.shared.screenAnalysisEnabled
+          && !ProactiveAssistantsPlugin.shared.isMonitoring
+        {
+          log("AppState: paywall lifted — resuming screen analysis monitoring")
+          ProactiveAssistantsPlugin.shared.startMonitoring { success, error in
+            if !success {
+              log("AppState: paywall-lifted monitoring restart failed: \(error ?? "unknown")")
+            }
+          }
         }
       } catch {
         log("AppState: failed to fetch trial metadata: \(error.localizedDescription)")

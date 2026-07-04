@@ -249,6 +249,12 @@ struct DesktopHomeView: View {
             .onChange(of: apiKeyService.isLoaded) { loaded in
               guard loaded else { return }
               log("DesktopHomeView: API keys loaded — retrying deferred services")
+              // Backend is now reachable (key fetch succeeded). Force a trial
+              // metadata refresh so a stale sticky `desktop_isPaywalled` flag
+              // restored at launch is cleared promptly instead of waiting for
+              // the 60s poll. fetchTrialMetadata() resumes screen-analysis
+              // monitoring itself once the paywall clears.
+              appState.fetchTrialMetadata()
               // Retry transcription
               if AssistantSettings.shared.transcriptionEnabled && !appState.isTranscribing {
                 log("DesktopHomeView: Starting deferred transcription")

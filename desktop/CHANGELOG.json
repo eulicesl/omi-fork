@@ -1,5 +1,7 @@
 {
-  "unreleased": [],
+  "unreleased": [
+    "Fixed screen capture staying paused for up to a minute after launch when a stale paywall state was restored from a previous session"
+  ],
   "releases": [
     {
       "version": "0.11.423",
