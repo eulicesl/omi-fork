@@ -73,8 +73,10 @@ struct OnboardingDataSourcesStepView: View {
           sourcePlural: "events",
           memoryCount: coordinator.calendarMemoriesSaved
         ),
-        isOn: true,
-        isDisabled: true
+        isOn: !coordinator.calendarInsightsFailed,
+        isDisabled: true,
+        scanFinished: coordinator.calendarInsightsFinished,
+        scanFailed: coordinator.calendarInsightsFailed
       )
       listDivider
 
@@ -87,8 +89,10 @@ struct OnboardingDataSourcesStepView: View {
           sourcePlural: "emails",
           memoryCount: coordinator.gmailMemoriesSaved
         ),
-        isOn: true,
-        isDisabled: true
+        isOn: !coordinator.gmailInsightsFailed,
+        isDisabled: true,
+        scanFinished: coordinator.gmailInsightsFinished,
+        scanFailed: coordinator.gmailInsightsFailed
       )
       listDivider
 
@@ -117,6 +121,8 @@ struct OnboardingDataSourcesStepView: View {
         ),
         isOn: true,
         isDisabled: coordinator.appleNotesInsightCount > 0,
+        scanFinished: coordinator.appleNotesInsightsFinished,
+        scanFailed: coordinator.appleNotesInsightsFailed,
         actionTitle: coordinator.appleNotesInsightCount > 0 ? nil : "Select Folder",
         action: coordinator.appleNotesInsightCount > 0
           ? nil
@@ -262,11 +268,30 @@ struct OnboardingDataSourcesStepView: View {
     metrics: String,
     isOn: Bool,
     isDisabled: Bool,
+    scanFinished: Bool? = nil,
+    scanFailed: Bool = false,
     actionTitle: String? = nil,
     action: (() -> Void)? = nil,
     onToggle: ((Bool) -> Void)? = nil
   ) -> some View {
-    HStack(alignment: .center, spacing: 12) {
+    // When scan state is supplied, surface the live status ("Scanning…" while a
+    // background read is in flight, a failure notice if it threw) instead of a
+    // bare "0 items" line — so a failed source is no longer indistinguishable
+    // from an empty one.
+    let displayMetrics: String
+    let metricsIsError: Bool
+    if scanFailed {
+      displayMetrics = "Couldn't read — check its permission or connection"
+      metricsIsError = true
+    } else if scanFinished == false {
+      displayMetrics = "Scanning…"
+      metricsIsError = false
+    } else {
+      displayMetrics = metrics
+      metricsIsError = false
+    }
+
+    return HStack(alignment: .center, spacing: 12) {
       ConnectorBrandIcon(brand: brand, size: 38, cornerRadius: 11)
 
       VStack(alignment: .leading, spacing: 3) {
@@ -274,9 +299,9 @@ struct OnboardingDataSourcesStepView: View {
           .font(.system(size: 15, weight: .semibold))
           .foregroundColor(OmiColors.textPrimary)
 
-        Text(metrics)
+        Text(displayMetrics)
           .font(.system(size: 12, weight: .medium))
-          .foregroundColor(OmiColors.textTertiary)
+          .foregroundColor(metricsIsError ? OmiColors.warning : OmiColors.textTertiary)
           .monospacedDigit()
           .lineLimit(1)
       }

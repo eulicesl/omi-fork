@@ -1,5 +1,7 @@
 {
-  "unreleased": [],
+  "unreleased": [
+    "Onboarding data sources now show a scanning status and a clear notice when Calendar, Email, or Apple Notes can't be read, instead of silently showing 0 items"
+  ],
   "releases": [
     {
       "version": "0.11.423",

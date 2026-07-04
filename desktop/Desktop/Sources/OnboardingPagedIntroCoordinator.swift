@@ -76,9 +76,15 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
   @Published var isSyncingAppleNotes = false
 
   private var insightsStarted = false
-  private var gmailInsightsFinished = false
-  private var calendarInsightsFinished = false
-  private var appleNotesInsightsFinished = false
+  @Published private(set) var gmailInsightsFinished = false
+  @Published private(set) var calendarInsightsFinished = false
+  @Published private(set) var appleNotesInsightsFinished = false
+  // Set when a source's background read throws, so the UI can distinguish a
+  // genuine "0 items" result from a failed connection/permission (previously
+  // both looked identical — the source appeared connected with 0 items).
+  @Published private(set) var gmailInsightsFailed = false
+  @Published private(set) var calendarInsightsFailed = false
+  @Published private(set) var appleNotesInsightsFailed = false
   private var gmailTask: Task<Void, Never>?
   private var calendarTask: Task<Void, Never>?
   private var appleNotesTask: Task<Void, Never>?
@@ -265,6 +271,8 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
 
   func refreshAppleNotesInsights() async {
     lastActionError = nil
+    // A manual folder-select retry clears any earlier background-scan failure.
+    appleNotesInsightsFailed = false
     isSyncingAppleNotes = true
     defer { isSyncingAppleNotes = false }
 
@@ -303,6 +311,7 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
       }
     } catch {
       lastActionError = error.localizedDescription
+      appleNotesInsightsFailed = true
     }
   }
 
@@ -647,6 +656,9 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
     gmailInsightsFinished = false
     calendarInsightsFinished = false
     appleNotesInsightsFinished = false
+    gmailInsightsFailed = false
+    calendarInsightsFailed = false
+    appleNotesInsightsFailed = false
     webResearchSummary = ""
 
     gmailTask = Task {
@@ -701,6 +713,7 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
         log(
           "OnboardingPagedIntroCoordinator: Gmail insights unavailable: \(error.localizedDescription)"
         )
+        await MainActor.run { self.gmailInsightsFailed = true }
         await self.markInsightFinished(.gmail)
       }
     }
@@ -764,6 +777,7 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
         log(
           "OnboardingPagedIntroCoordinator: Calendar insights unavailable: \(error.localizedDescription)"
         )
+        await MainActor.run { self.calendarInsightsFailed = true }
         await self.markInsightFinished(.calendar)
       }
     }
@@ -835,6 +849,7 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
           self.appleNotesInsightCount = 0
           self.appleNotesSummary = ""
           self.appleNotesMemoriesSaved = 0
+          self.appleNotesInsightsFailed = true
         }
         await self.markInsightFinished(.appleNotes)
       }
