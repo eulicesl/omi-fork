@@ -2490,9 +2490,20 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 // Sleep was cancelled — don't fire the watchdog.
                 return
             }
-            await MainActor.run {
-                guard let self = self, self.isSending, self.sendGeneration == sendGen else { return }
+            guard let self = self else { return }
+            // Only fire if this exact send is still in flight.
+            let stillStuck = await MainActor.run { () -> Bool in
+                guard self.isSending, self.sendGeneration == sendGen else { return false }
                 log("ChatProvider: send watchdog fired at 180s — bridge is stuck; force-resetting")
+                return true
+            }
+            guard stillStuck else { return }
+            // Interrupt the stuck bridge query before releasing the lock so its
+            // still-live message continuation can't be handed to the next send —
+            // mirrors stopAgent().
+            await self.agentBridge.interrupt()
+            await MainActor.run {
+                guard self.isSending, self.sendGeneration == sendGen else { return }
                 self.isSending = false
                 self.isStopping = false
                 self.errorMessage = "Response took too long. Try again."
@@ -2503,7 +2514,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         guard await ensureBridgeStarted() else {
             isSending = false
             isStopping = false
-            errorMessage = "AI not available"
+            // Preserve the descriptive errorMessage set inside ensureBridgeStarted().
+            if errorMessage == nil { errorMessage = "AI not available" }
+            return
+        }
+        // The Stop button is visible during the cold start above. If the user tapped
+        // it, stopAgent() bumped sendGeneration — abort before starting the query.
+        guard sendGeneration == sendGen else {
+            isSending = false
+            isStopping = false
             return
         }
 
@@ -2529,6 +2548,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
             sessionId = sid
         }
+        // Abort if the user tapped Stop while a new session was being created.
+        guard sendGeneration == sendGen else {
+            isSending = false
+            isStopping = false
+            return
+        }
 
         // Wait for staged attachments to finish uploading so we can include their
         // server IDs in the saved-message metadata. The bubble shows immediately
@@ -2545,6 +2570,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
             attachmentsForMessage = pendingAttachments
             pendingAttachments.removeAll()
+        }
+        // Abort if the user tapped Stop while attachments were uploading.
+        guard sendGeneration == sendGen else {
+            isSending = false
+            isStopping = false
+            return
         }
         let attachmentMetadataJSON = attachmentsForMessage.isEmpty
             ? nil
