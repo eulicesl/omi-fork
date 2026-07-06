@@ -16,20 +16,34 @@
 | Rust toolchain | cargo 1.94.1 |
 | Build command (attempted) | Rust backend: `cargo check --all-targets` → **passed (exit 0)**, 3 dead-code warnings in test code. Swift app: **not buildable in this environment** |
 | Run method | **None** — no runtime reproduction was possible (no macOS, no Swift). All findings are code-inspection based |
-| Total audit loops completed | 2 (Loop 1: 11 parallel area audits; Loop 2: cross-cutting pattern sweeps + adversarial source verification of top findings) |
+| Total audit loops completed | 3 (Loop 1: 11 parallel area audits; Loop 2: cross-cutting pattern sweeps + class confirmation; Loop 3: 5 parallel adversarial verifiers that re-read source to *refute* each top finding) |
 
-### Critical honesty caveat on "Confirmed"
+### Classification scheme (adjusted for this Linux-only environment)
 
-The task rubric reserves **Confirmed** for bugs *reproduced locally through build/runtime/manual testing*. **This environment has no macOS and no Swift toolchain, so nothing could be run.** Therefore **zero findings are classified "Confirmed."** Every finding below is **High-Confidence Code Inspection**, **Potential Edge Case**, or **False Positive**. Where I write "verified," it means I re-read the exact source lines and the code path provably does the stated thing — not that it was executed. Runtime confirmation on a real Mac is the required next step before fixes ship, and each High/Critical item notes whether visual/runtime proof is needed.
+Per the updated rules, every finding carries an explicit **evidence level** and a **classification**. Because this container has **no macOS and no Swift toolchain, nothing could be built or run** — so **no finding is labeled "Confirmed Bug."** The four classes used:
+
+1. **High-Confidence Code Inspection Bug** — the control/data flow, state handling, or persistence logic in the cited source provably does the stated wrong thing. This is the ceiling any finding can reach in this environment.
+2. **Potential Edge Case** — plausible from the source but the user-visible impact depends on runtime behavior (SwiftUI structural identity, AVFoundation/CoreAudio semantics, Firebase SDK internals, scheduler timing, backend echo) that cannot be established statically.
+3. **Confirmed Bug** — **used by nothing in this report.** Reserved for a bug reproduced via an actual build/run/test with logs, screenshots, video, or an executable test result. Requires a real macOS/Xcode environment.
+4. **Ruled Out / False Positive** — investigated and shown not to be a bug.
+
+Every finding is tagged with one of these **evidence-level** phrases:
+- **Verified in this environment** — confirmed by a command that actually ran here (only the Rust `cargo check`, and grep/source cross-checks of *static facts* like "these 5 functions are never called").
+- **Code-inspection only** — the default for every Swift/UI finding: read, not run.
+- **Requires macOS runtime verification** — the finding's user impact needs a real Mac to demonstrate (flagged individually; consolidated in the *macOS Runtime Verification Required* section below).
+- **Requires visual UI proof before PR** — a UI-facing finding whose fix should be validated with a screenshot/recording before a PR is opened.
+
+**Do not read this report as "the macOS app was verified."** It was not run at all. Loop 3 hardened the *code-inspection* confidence by adversarially re-reading source; it did not and could not add runtime evidence. Swift/Xcode runtime verification still has to happen on macOS before PRs are opened for any UI/runtime bug.
 
 ---
 
 ## Executive Summary
 
-- **High-confidence code-inspection bugs:** ~120 distinct defects across 11 feature areas (raw agent output before de-dup: ~138).
-- **Confirmed (reproduced locally):** 0 — see caveat above (Linux-only environment).
-- **Potential edge cases needing verification:** ~18 (device-protocol wire formats, backend echo semantics, Firebase SDK internals, scheduler timing).
-- **False positives ruled out:** documented per area (e.g. the two remaining UI force-unwraps are guarded; several settings keys verified string-consistent).
+- **High-Confidence Code Inspection Bugs:** ~110 distinct defects across 11 feature areas (raw agent output before de-dup: ~138). Of the ~70 top findings put through Loop-3 adversarial challenge, ~60 held.
+- **Confirmed Bugs (reproduced locally):** **0** — this class is intentionally empty (Linux-only environment; see classification scheme above).
+- **Potential Edge Cases needing macOS runtime verification:** ~29 — the ~18 originally flagged plus 11 Loop-3 downgrades (BUG-023 FocusPage loop [contested], BUG-032 stale-account listener, BUG-040 system-audio amplitude, BUG-053 stream splice, BUG-058 temp-file race half, BUG-064 shortcut Codable, BUG-066/067 pagination drift, BUG-022/094 onboarding [Skip mitigates], BUG-124 progress dots [cosmetic; crash angle refuted]).
+- **Ruled Out / False Positives:** documented per area (the two remaining UI force-unwraps are guarded; settings keys verified string-consistent; BUG-124's crash angle refuted). No top finding was *cleanly* refuted in Loop 3 — the closest was BUG-023, which is recorded as contested/edge-case, not a false positive.
+- **Loop-3 corrections applied:** BUG-001 delete site is `RewindStorage.swift:516-533` (not 95/111/126); BUG-048 duplicate-message impact is bounded by `idempotencyKey` dedup (leak + unkeyed dupes remain); BUG-049 harm is stale process env, not wrong-adapter routing; BUG-056 "regardless of prompt state" was overstated (it *is* gated on `!isNowGranted`).
 - **Highest-risk areas:** Rewind (data loss + cross-user leakage + broken recovery), Audio/BLE (mic-stays-hot, hangs, data races), Auth/session (sign-out races, cross-account bleed), Chat/agent-runtime (stuck turns, cross-session message bleed, process leaks), Settings routing (whole config sections unreachable).
 - **Recommended first PRs (in order):**
   1. **PR-1 Rewind data-loss & recovery** — BUG-001 (retention wipes Screenshots dir), BUG-013 (rebuild-index no-op), BUG-014 (corruption-recovery bricks DB).
@@ -57,8 +71,16 @@ The task rubric reserves **Confirmed** for bugs *reproduced locally through buil
   - N2 `$0` shadowing → `$0.appId == $0.id` self-comparison verified verbatim — confirms BUG-024.
 - **Notes:** Because a full cross-cutting sweep produced no new credible bug (only breadth confirmation), the discovery loop reached its stop condition.
 
+### Loop 3 — Adversarial verification (refute-first)
+- **Method:** 5 parallel verifiers, each assigned a cluster (Rewind/audio; auth/networking; chat UI+runtime; settings/tasks/pages; lifecycle/PTT/onboarding), instructed to *re-read the exact cited source and try to refute the finding*. A finding "HOLDS" only if the control/data flow provably does the wrong thing from source alone; otherwise it was downgraded to Potential Edge Case, refuted, or merged.
+- **~70 top findings challenged → ~60 HELD, ~11 downgraded to Potential Edge Case, 0 cleanly refuted.**
+- **Downgrades (now Potential Edge Case):** BUG-023 (FocusPage loop — *contested*: refuter says `.task` runs once, but the original branch-swap-changes-identity argument is a genuine SwiftUI-structural-identity question only a runtime can settle), BUG-032 (compensating `getIdToken` cross-check bounds the stale-account risk), BUG-040 (double-downmix is real but the −6 dB amplitude claim needs an audio measurement), BUG-053 (single-slot stream buffer real but no reachable concurrent-stream path found on one provider), BUG-058 temp-file-race half (blocking-call half holds), BUG-064 (Codable shape stable since inception + string legacy path — robustness smell, no proven data loss), BUG-066/067 (pagination-offset drift only past 100 items / with local-only rows), BUG-022 & BUG-094 (onboarding dead-ends have a Skip escape hatch — the real defect is a perpetual spinner, not a hard lock), BUG-124 (progress-dot cosmetic; the out-of-range/crash reading was refuted — `ForEach(0..<13)` never over-indexes).
+- **Corrections folded in:** BUG-001 unguarded delete is at `RewindStorage.swift:516-533` (the original 95/111/126 were save/load/URL helpers); BUG-012 is a narrow race (termination usually resumes requests — the provable defect is `query()` alone omitting the `sent` check its 4 siblings have); BUG-048 is bounded by `idempotencyKey` dedup (handler leak + unkeyed-turn dupes remain); BUG-049 is stale process env after a mode switch, not wrong-adapter routing; BUG-056's "regardless of prompt state" was overstated.
+- **Remediation clusters found:** BUG-016/017/018/051 are one root cause (`@MainActor` mutate-after-`await` with no session-generation guard) — a single captured-generation-token pattern fixes all four. BUG-019/020/063 are one "empty-collection-as-unset-sentinel" antipattern. BUG-075/076 are the same stale-`app`-struct issue in `AppDetailSheet`.
+- **Bonus finding surfaced during challenge:** `ChatPage.swift:190,822` use `OmiColors.purplePrimary` — a purple UI accent, which AGENTS.md forbids (join it to BUG-088-class UI cleanups; add to the purple-violation list alongside BUG-011-area work).
+
 ### Why the audit stopped
-Loop 2's whole-tree sweeps for each discovered bug class surfaced no defect not already captured in Loop 1 — they only widened/verified known classes. Combined with the hard constraint that no runtime reproduction is possible here, additional inspection loops would yield diminishing returns. The correct next step is **runtime verification on a real Mac**, not more static passes.
+Loop 2's whole-tree sweeps surfaced no defect beyond Loop 1's classes; Loop 3's adversarial pass refuted none cleanly and only *tightened* confidence and line references. Two full passes past discovery produced no new credible bug, which is the stop condition. The remaining uncertainty is not "are there more bugs to read" but "which of these reproduce at runtime" — and that requires a real Mac. Additional static loops would yield diminishing returns.
 
 ---
 
@@ -86,10 +108,11 @@ Severity uses the task rubric: **Critical** = crash / data loss / broken core re
 ### CRITICAL
 
 #### BUG-001 — Rewind retention cleanup (and single-delete) deletes the entire legacy `Screenshots/` directory
-- **Severity:** Critical (user data loss) · **Confidence:** High
+- **Classification:** High-Confidence Code Inspection Bug · **Severity:** Critical (user data loss) · **Confidence:** High
+- **Evidence level:** Code-inspection only (Loop-3 HELD). The empty-string store→query→unguarded-`removeItem` chain is source-provable; the *whole-directory* blast radius depends on Foundation's `appendingPathComponent("")` resolving to the parent dir — **requires macOS runtime (or a tiny Foundation harness) to confirm blast radius**. Fix (empty-path guard) is safe regardless.
 - **Area:** Rewind / local storage
 - **User impact:** All legacy JPEG screenshots — including ones well within the retention window — are recursively deleted once any video-era row ages past retention (default 7 days), or on a single manual delete of any video-based screenshot.
-- **Files/symbols:** `Rewind/Core/RewindDatabase.swift:3043` (`deleteScreenshotsOlderThan`, query filters only `imagePath IS NOT NULL`), `Rewind/Core/RewindStorage.swift:95,111,126` (`deleteScreenshot(relativePath:)` — no empty guard), `Rewind/Services/RewindIndexer.swift:251,333,437,680` (`insertScreenshot` stores `imagePath: ""`), `Rewind/UI/RewindViewModel.swift:412-416`.
+- **Files/symbols:** `Rewind/Core/RewindDatabase.swift:3043` (`deleteScreenshotsOlderThan`, query filters only `imagePath IS NOT NULL`), **`Rewind/Core/RewindStorage.swift:516-533`** (`deleteScreenshot`/`deleteScreenshots` — no empty guard; *Loop-3 correction: the earlier-cited 95/111/126 are save/load/URL helpers*), `Rewind/Services/RewindIndexer.swift:251,333,437,680` (`insertScreenshot` stores `imagePath: ""`), `Rewind/UI/RewindViewModel.swift:412-416`.
 - **Repro (needs real Mac):** Record with the video pipeline (frames stored `imagePath:""`), wait past retention, trigger cleanup; observe `Screenshots/` recursively removed.
 - **Expected:** Only the specific expired screenshot files are deleted.
 - **Actual:** `""` → `screenshotsDirectory.appendingPathComponent("")` = the directory itself → `removeItem` wipes everything.
@@ -354,6 +377,18 @@ Severity uses the task rubric: **Critical** = crash / data loss / broken core re
 ---
 
 ## Potential Edge Cases Needing More Verification
+
+**Loop-3 downgrades (were tentatively higher; the source doesn't prove the user impact without a runtime):**
+- **BUG-023** FocusPage infinite-refresh loop — *contested*. Refuter: `.task` runs once per view identity and `isLoading` flips false once, so no loop. Original: the `isLoading` branch swaps out the very view whose `.task` drives the load, changing structural identity and re-arming `.task`. Only a running SwiftUI view hierarchy settles this. **Requires macOS runtime.**
+- **BUG-040** System-audio double-downmix — the 2-channel-input + manual-avg + converter-downmix path is real, but whether the result is −6 dB (or noise) depends on `AVAudioConverter`'s undocumented stereo→mono behavior. **Requires an audio-level measurement.**
+- **BUG-053** Cross-message stream splice — the single-slot last-writer-wins buffer exists, but no reachable concurrent-stream path onto one `ChatProvider` was found (`sendMessage` serializes via `!isSending`). **Requires a demonstrated overlapping-stream surface.**
+- **BUG-058** (temp-file-race half) — the `.upload.gz` collision needs actor reentrancy during an active upload; narrow. (The `waitUntilExit()`-blocks-the-actor half HOLDS.)
+- **BUG-064** `KeyboardShortcut` Codable fragility — the struct shape has been stable since introduction and a string legacy path exists, so there is no *current* data-loss path; it would bite the day a new non-optional field is added. Robustness smell, not a live bug.
+- **BUG-066 / BUG-067** Task pagination-offset drift — only diverges past 100 items or with local-only unsynced rows inflating the first page.
+- **BUG-022 / BUG-094** Onboarding dead-ends — a Skip escape hatch exists, so these are a *perpetual-spinner / dead-end-text* UX defect, not a hard lockout. **Requires macOS runtime to see the stuck state.**
+- **BUG-124** Onboarding progress dots for steps 14–18 — the crash/out-of-range reading is **refuted** (`ForEach(0..<13)` never over-indexes); the surviving defect is purely cosmetic (bar reads 100%, no active dot).
+
+**Originally-flagged edge cases (unchanged):**
 - **Device-protocol wire formats** — WifiSync 440-byte block alignment (`WifiSyncService.parseFrames:352-397`), Limitless protobuf field numbers, Bee ADTS multi-frame packets. Need device captures.
 - **Firebase SDK internals** — BUG-032's worst case depends on `currentUser` behavior after a failed `signIn(withCustomToken:)` + thrown `signOut()`.
 - **Backend echo semantics** — BUG-060 assumes `AssistantSettingsResponse` returns the pushed `analysisPrompt` verbatim (Python backend not read).
@@ -370,6 +405,31 @@ Severity uses the task rubric: **Critical** = crash / data loss / broken core re
 - `LocalAgentAPIServer` — loopback bind, constant-time token compare, size caps: no defect. `screenAnalysisEnabled`/`transcriptionEnabled` routed consistently. PTT event monitors installed/removed symmetrically; `GlobalShortcutManager` unregisters before re-register (no Carbon hotkey accumulation); no `NSScreen.main!` force unwraps in scope. `DashboardTaskRefreshService`/`Policy` pagination/day-window math correct.
 
 ---
+
+## macOS Runtime Verification Required
+
+Every finding in this report is **code-inspection only** — none was executed. Before a fix PR is opened for any Swift/macOS bug, it must be reproduced on a real macOS/Xcode build with runtime evidence. This section gives per-bug reproduction recipes for the highest-priority findings. Setup for all: build a named bundle (`cd desktop/macos && OMI_APP_NAME="omi-audit-repro" ./run.sh`), seed auth from "Omi Dev", drive with `./scripts/omi-ctl` / `agent-swift`, and read `/private/tmp/omi.log` (or the local Rust backend stdout). "**Blocks PR**" = do not open the fix PR until reproduced.
+
+| Bug | Repro steps (macOS) | Required app state / setup | Expected | Actual (predicted by code) | Evidence to capture | Visual proof | Blocks PR? |
+|---|---|---|---|---|---|---|---|
+| **BUG-001** | Record with the video pipeline so `screenshots` rows have `imagePath:""`; set a short retention; advance the clock / trigger `deleteScreenshotsOlderThan`. Also test a single manual delete of a video-based screenshot. | A `~/…/users/{uid}/Screenshots/` dir with legacy JPEGs + video-era rows. | Only expired files removed. | `appendingPathComponent("")` targets the Screenshots dir → recursive wipe of all JPEGs. | `ls -R Screenshots/` before/after; DB row of the deleted item. | Yes (file tree) | **Yes** |
+| **BUG-002** | Sign in as A, use goals/tasks/task-chat/file-index/knowledge-graph; sign out; sign in as B; read those surfaces. | Two accounts on one Mac; A must have populated the 5 domains. | B sees only B's data. | B reads/writes A's `omi.db` (stale cached pool). | Compare DB file path + row owners across the switch; log the pool identity. | No | **Yes** |
+| **BUG-004** | Start recording; change the input device (or flip a BT mic profile); within ~0.3–3 s press stop. | Two input devices (or one BT headset). | Mic released; orange indicator off. | Reconfigure restarts the IOProc after stop → mic stays hot. | Screen recording of the macOS mic-in-use indicator after stop; `omi.log` reconfigure lines. | Yes (indicator) | **Yes** |
+| **BUG-005** | Run a Gemini barge-in replacement and an omni PTT turn under ThreadSanitizer. | TSan build; realtime hub + PTT exercised. | No TSan reports. | Data race on `omniPreconnectBuffer`/`pendingAudio`/`pendingBargeInReplacement`. | TSan report; or intermittent crash log. | No | **Yes** |
+| **BUG-006** | Force a token near-expiry so an API call triggers `refreshIdToken`; press Sign Out while the refresh URLSession call is in flight. | Debug hook to slow the refresh, or network throttling. | No tokens on disk post-signout. | Refresh resumes and re-`saveTokens`; `getIdToken` backfills `auth_userId`. | Keychain/UserDefaults dump after signout; `omi.log`. | No | **Yes** |
+| **BUG-007** | Provision an agent VM; capture desktop→VM traffic during DB upload / auth. | Agent VM feature enabled; packet capture on the path. | TLS; no token in URL. | `http://<vmIP>:8080/...?token=...` + Firebase token in cleartext body. | tcpdump/Charles capture. | No | **Yes** (security) |
+| **BUG-009** | On a **stable-channel** build (title `omi vX.Y`), close/hide the main window, press Ctrl+Opt+R; also test dock-icon reopen and quit-with-chat-panel-open → relaunch. | Stable channel or a bundle whose window title starts lowercase `omi`. | Window surfaces / width restored. | `hasPrefix("Omi")` misses lowercase title → hotkey dead, no restore. | Screen recording of the dead hotkey; window-width before/after. | Yes | **Yes** |
+| **BUG-010** | Connect an Omi device, start an SD-card sync or audio stream, then walk it out of range / power it off mid-stream. | A real BLE device. | Sync/stream ends with an error; UI recovers. | Streams never `finish()`, `isSyncing` stuck true until app restart. | Screen recording of stuck "syncing"; `omi.log`. | Yes | **Yes** |
+| **BUG-011** | Open Settings → try to reach Ask Mode / CLAUDE.md / Skills toggles. | Any build. | The toggles are reachable. | `.aiChat` redirects to `.advanced`; toggles live only in dead section. | Screen recording of the redirect; grep proof no other writer. | Yes | **Yes** |
+| **BUG-013 / BUG-014** | Corrupt the Rewind DB (truncate `omi.db`); trigger "Rebuild Index" / relaunch. | A corrupted Rewind DB. | Chunks re-indexed / DB recovers. | Rebuild finds 0 `.hevc` (writer emits `.mp4`); recovery DB fails migration every launch. | Progress jumps to 100% with 0 rows; launch logs showing "table already exists". | Yes (rebuild) | **Yes** |
+| **BUG-015** | In Rewind search type `don't`, `e-mail`, `3:30pm`, `api.omi.me`. | Rewind has indexed screenshots. | Results or clean empty state. | `fts5: syntax error`, caught+logged, previous results left on screen. | Screen recording; `omi.log` FTS error. | Yes | **Yes** |
+| **BUG-016 / 017 / 018** | Rapidly switch chat sessions (A slow, B fast); trigger app-activation poll while switching. | Multiple chat sessions with history. | Each session shows its own messages. | Late response overwrites / appends into the wrong session. | Screen recording of A's messages under B's title. | Yes | **Yes** |
+| **BUG-029** | Record/transcribe continuously past ~500 words in one session; watch live-notes output. | Live notes enabled; a long audio source. | Notes keep generating. | Notes stop permanently after buffer saturates at 500. | Note count vs word count over time; `omi.log`. | No (behavioral) | **Yes** |
+| **BUG-030** | Bind PTT to a key+modifier chord (⌘⇧Space); hold, speak, release all keys at once. | PTT chord binding. | Turn ends, mic released, audio unmuted. | Key-up missed → stuck `.listening`, music stays muted. | Screen recording of stuck PTT + muted audio. | No | **Yes** |
+| **BUG-089** | Start recording, then Quit the app (⌘Q) while a session is active; relaunch. | Active transcription session at quit. | Session finalized cleanly. | Cleanup Task never runs; session recovered as "crashed" next launch. | `omi.log` recovery pass; session end-reason. | No | Recommended |
+| **BUG-090** | Open "Report Issue…", close it with the red X, open it again. | Any build. | Reopens cleanly. | Over-release/UAF on the retained static window → crash. | Crash log (EXC_BAD_ACCESS). | No | **Yes** (crash) |
+
+For every other Swift/macOS finding not tabled here, the same bar applies: reproduce on macOS with a screenshot/recording/log before opening its fix PR. UI-facing HOLDS (see the per-finding "Visual proof" flags) additionally need a before/after visual.
 
 ## Recommended PR Plan
 
@@ -397,7 +457,8 @@ Severity uses the task rubric: **Critical** = crash / data loss / broken core re
 6. **PR readiness** — pre-commit hook installed; changelog fragment for user-visible desktop changes (`desktop/macos/changelog/unreleased/*.json`); docs updated if behavior/setup changed; verification evidence in the PR body.
 
 ## Final Audit Stop Condition
-- **Loops completed:** 2 (11-way area audit + whole-tree cross-cutting sweeps/verification).
-- **Did the final loop find zero new bugs?** Yes — Loop 2 produced no net-new credible defect; it only widened and verified the classes from Loop 1 (and confirmed 6 top findings line-by-line against source).
-- **Most likely to still hide bugs (needs runtime + device):** BLE device-protocol wire formats; the Node agent bridge (TypeScript, out of Swift scope); SwiftUI state-desync in the large partially-read views (`FloatingControlBarView`, `AgentPill`, `TasksPage` 5000-5798); Firebase SDK edge behavior; backend echo semantics for settings sync.
-- **What to audit next:** (1) reproduce and fix the Critical set on a real Mac with runtime proof; (2) a device-in-hand BLE protocol pass; (3) a TSan build to confirm the data-race findings (BUG-005, BUG-061, BUG-039); (4) audit the Node bridge repo for the `idempotencyKey`/EOF/`cancelled` assumptions that gate BUG-047/048/117.
+- **Loops completed:** 3 (Loop 1: 11-way area audit; Loop 2: whole-tree cross-cutting sweeps + class confirmation; Loop 3: 5-way adversarial refute-first verification of ~70 top findings).
+- **Did the final loop find zero new bugs?** Yes for *discovery* — Loop 2 produced no net-new credible defect and Loop 3 refuted none cleanly. Loop 3's job was not discovery but *adversarial hardening*: it downgraded ~11 findings to Potential Edge Case, corrected line references (BUG-001), narrowed impact framing (BUG-012/048/049/056), and surfaced remediation clusters. That the challenge pass changed classifications but found no new class is the honest stop signal for static analysis.
+- **This was never run.** No Confirmed Bugs exist in this report because the Swift/macOS app was not built or executed here. The bottleneck now is *runtime reproduction*, not more reading.
+- **Most likely to still hide bugs (needs runtime + device):** BLE device-protocol wire formats; the Node agent bridge (TypeScript, out of Swift scope); SwiftUI state-desync in the large partially-read views (`FloatingControlBarView`, `AgentPill`, `TasksPage` 5000-5798); Firebase SDK edge behavior; backend echo semantics for settings sync; the contested BUG-023 FocusPage loop (structural-identity question).
+- **What to audit next:** (1) on a real Mac, work the *macOS Runtime Verification Required* table top-to-bottom and reproduce the Critical set with logs/screenshots before any fix PR; (2) a device-in-hand BLE protocol pass; (3) a ThreadSanitizer build to settle the data-race findings (BUG-005, BUG-061, BUG-039); (4) audit the Node bridge repo for the `idempotencyKey`/EOF/`cancelled` assumptions that gate BUG-047/048/117; (5) resolve the BUG-023 contest by observing the Focus page with zero history on-device.
