@@ -73,7 +73,11 @@
 
 **#4 — The macOS runner is unavailable, so runtime verification is still blocked.** Nothing was compiled or executed; all four bugs remain **Inconclusive**, not Confirmed.
 
-To unblock, run the exact commands above on a real macOS/Xcode machine (or Codemagic macOS CI / a self-hosted Apple-silicon runner — see `XCTEST-PLAN.md` → *Codemagic* section). Prereq: `brew install webp` (CWebP system dependency). Capture each run's full output into the matching `evidence/BUG-XXX/` folder (overwriting the `xctest-attempt.txt` placeholder), then I will fill in the real compile/runtime results and verdicts here.
+### Next executable path: Codemagic macOS CI (workflow drafted)
+
+Because this Linux session cannot run Swift/Xcode, the next executable path is a **verification-only Codemagic macOS workflow**, now drafted at `desktop/macos/docs/verification/codemagic-xctest-workflow.yaml` (workflow id **`omi-desktop-xctest-verify`**, `mac_mini_m2`, `xcode: 16.4`). It runs each of the four test classes with `xcrun swift test --package-path Desktop --filter <Class>` from `working_directory: desktop/macos`, writes per-bug logs into `evidence/BUG-XXX/`, and uploads them as artifacts. It has **no** signing/notarization/publishing and **no** auto-trigger (manual only). Run it, download the artifacts into the matching `evidence/BUG-XXX/` folders (replacing the `xctest-attempt.txt` placeholders), and I will fill in the real compile/runtime verdicts here.
+
+To unblock without CI, the same commands run on any macOS/Xcode machine or self-hosted Apple-silicon runner. Prereq: `brew install webp` (CWebP system dependency).
 
 Two outcomes to watch for when it runs:
 - **Compile error** on any drafted file → classify as a **test-draft issue** (not bug confirmation); I correct the test and it re-runs. The likeliest spots are the actor-await forms (BUG-015) and the `GoalRecord` initializer (BUG-002), both written against verified signatures but never compiler-checked.

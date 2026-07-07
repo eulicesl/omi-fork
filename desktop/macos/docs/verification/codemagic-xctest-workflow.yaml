@@ -1,0 +1,134 @@
+# Verification-only Codemagic workflow — Omi macOS no-seam XCTest batch
+# =====================================================================
+# Runs the four no-seam verification tests (audit fff46934, tests at f327a2a6) on a
+# real macOS runner and saves per-bug logs as artifacts. VERIFICATION ONLY: it does not
+# sign, notarize, publish, or touch production release steps.
+#
+# WHY STANDALONE (not merged into the repo root codemagic.yaml):
+#   The root codemagic.yaml is a ~2860-line production release pipeline (signing,
+#   notarization, App Store / Sparkle publishing). Per the phase rule "if Codemagic
+#   config is risky to modify, create a standalone proposed config file", this workflow
+#   is kept here, un-wired, so it cannot affect production builds.
+#
+# HOW TO USE IT — pick one:
+#   (A) Point Codemagic at this file: in the Codemagic app, set the app's config path to
+#       desktop/macos/docs/verification/codemagic-xctest-workflow.yaml (or upload it as the
+#       build config), then Start new build -> select "omi-desktop-xctest-verify".
+#   (B) Merge the single workflow below into the repo root codemagic.yaml: copy the
+#       "omi-desktop-xctest-verify:" block (everything under `workflows:`) and paste it as a
+#       new top-level entry under the existing `workflows:` map in ./codemagic.yaml. It is an
+#       independent workflow key and does not alter any existing workflow.
+#   Then trigger it manually (Codemagic UI "Start new build", or the Codemagic REST API
+#   POST /builds with this workflow id). It has no automatic triggering block on purpose.
+#
+# COMMAND CORRECTION vs the phase brief: Package.swift lives at desktop/macos/Desktop/,
+#   so the SwiftPM path is `--package-path Desktop` from working_directory desktop/macos
+#   (NOT `--package-path desktop/macos`).
+
+workflows:
+  omi-desktop-xctest-verify:
+    name: Verify OMI Desktop (no-seam XCTest batch)
+    instance_type: mac_mini_m2          # same runner family as omi-desktop-swift-release
+    max_build_duration: 60
+    environment:
+      groups:
+        - firebase                       # provides GOOGLE_INFO_PLIST_KEY if you prefer to inject it;
+                                         # not strictly required — Desktop/Sources/GoogleService-Info.plist
+                                         # is tracked in the repo, so the build resource already exists.
+      vars:
+        # Where per-bug logs are written (also uploaded as artifacts below).
+        EVIDENCE_DIR: "docs/verification/evidence"
+      xcode: 16.4                        # match omi-desktop-swift-release
+    working_directory: desktop/macos
+    cache:
+      cache_paths:
+        - ~/Library/Caches/org.swift.swiftpm
+    triggering: {}                       # intentionally empty: manual trigger only (no auto-run)
+    scripts:
+      - name: Record toolchain metadata
+        script: |
+          set -euo pipefail
+          META="$EVIDENCE_DIR/xctest-env.txt"
+          {
+            echo "commit: $(git rev-parse HEAD)"
+            echo "branch: ${CM_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+            echo "date_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "--- sw_vers ---"; sw_vers
+            echo "--- xcodebuild ---"; xcodebuild -version
+            echo "--- swift ---"; xcrun swift --version
+          } | tee "$META"
+
+      - name: Install native build dependency (libwebp for CWebP)
+        script: |
+          set -euo pipefail
+          # CWebP is a SwiftPM systemLibrary (pkgConfig: libwebp, providers: .brew(["webp"])).
+          # A single-arch (arm64) brew libwebp is sufficient for a native-arch test build —
+          # the universal-binary dance in omi-desktop-swift-release is only for the shipped app.
+          brew list webp >/dev/null 2>&1 || brew install webp
+          pkg-config --exists libwebp && echo "libwebp pkg-config OK: $(pkg-config --modversion libwebp)"
+
+      - name: Resolve SwiftPM dependencies
+        script: |
+          set -euo pipefail
+          xcrun swift package --package-path Desktop resolve
+
+      - name: Run BUG-001 — RewindEmptyImagePathDeletionTests
+        script: |
+          set +e   # red test is the expected result; do not abort the pipeline
+          mkdir -p "$EVIDENCE_DIR/BUG-001"
+          LOG="$EVIDENCE_DIR/BUG-001/xctest-RewindEmptyImagePathDeletionTests.txt"
+          echo "\$ xcrun swift test --package-path Desktop --filter RewindEmptyImagePathDeletionTests" | tee "$LOG"
+          xcrun swift test --package-path Desktop --filter RewindEmptyImagePathDeletionTests 2>&1 | tee -a "$LOG"
+          echo "exit_code=${PIPESTATUS[0]}" | tee -a "$LOG"
+
+      - name: Run BUG-002 — GoalStorageUserSwitchIsolationTests
+        script: |
+          set +e
+          mkdir -p "$EVIDENCE_DIR/BUG-002"
+          LOG="$EVIDENCE_DIR/BUG-002/xctest-GoalStorageUserSwitchIsolationTests.txt"
+          echo "\$ xcrun swift test --package-path Desktop --filter GoalStorageUserSwitchIsolationTests" | tee "$LOG"
+          xcrun swift test --package-path Desktop --filter GoalStorageUserSwitchIsolationTests 2>&1 | tee -a "$LOG"
+          echo "exit_code=${PIPESTATUS[0]}" | tee -a "$LOG"
+
+      - name: Run BUG-015 — RewindSearchFTSPunctuationTests
+        script: |
+          set +e
+          mkdir -p "$EVIDENCE_DIR/BUG-015"
+          LOG="$EVIDENCE_DIR/BUG-015/xctest-RewindSearchFTSPunctuationTests.txt"
+          echo "\$ xcrun swift test --package-path Desktop --filter RewindSearchFTSPunctuationTests" | tee "$LOG"
+          xcrun swift test --package-path Desktop --filter RewindSearchFTSPunctuationTests 2>&1 | tee -a "$LOG"
+          echo "exit_code=${PIPESTATUS[0]}" | tee -a "$LOG"
+
+      - name: Run BUG-013 — RewindVideoChunkRebuildFormatTests
+        script: |
+          set +e
+          mkdir -p "$EVIDENCE_DIR/BUG-013"
+          LOG="$EVIDENCE_DIR/BUG-013/xctest-RewindVideoChunkRebuildFormatTests.txt"
+          echo "\$ xcrun swift test --package-path Desktop --filter RewindVideoChunkRebuildFormatTests" | tee "$LOG"
+          xcrun swift test --package-path Desktop --filter RewindVideoChunkRebuildFormatTests 2>&1 | tee -a "$LOG"
+          echo "exit_code=${PIPESTATUS[0]}" | tee -a "$LOG"
+
+      - name: Summarize (never fails — the logs are the deliverable)
+        script: |
+          set +e
+          SUMMARY="$EVIDENCE_DIR/xctest-summary.txt"
+          : > "$SUMMARY"
+          for f in "$EVIDENCE_DIR"/BUG-*/xctest-*.txt; do
+            code=$(grep -oE 'exit_code=[0-9]+' "$f" | tail -1 | cut -d= -f2)
+            comp=$(grep -qiE 'error: |cannot find|no such module|compile' "$f" && echo "COMPILE-ERROR" || echo "compiled")
+            failed=$(grep -qiE "Test Suite '.*' failed|failed \(|XCTAssert|error: -\[|Fatal error" "$f" && echo "test-failed" || echo "no-fail-marker")
+            echo "$(basename "$(dirname "$f")"): exit=${code:-?} build=$comp result=$failed" | tee -a "$SUMMARY"
+          done
+          echo "" | tee -a "$SUMMARY"
+          echo "Interpretation: build=compiled + result=test-failed  => bug reproduced (candidate Confirmed)." | tee -a "$SUMMARY"
+          echo "                build=COMPILE-ERROR                   => test-draft issue (fix the test, re-run)."   | tee -a "$SUMMARY"
+          echo "                build=compiled + result=no-fail-marker => unexpected pass (re-audit the finding)."   | tee -a "$SUMMARY"
+          exit 0
+    artifacts:
+      - desktop/macos/docs/verification/evidence/xctest-env.txt
+      - desktop/macos/docs/verification/evidence/xctest-summary.txt
+      - desktop/macos/docs/verification/evidence/BUG-001/*.txt
+      - desktop/macos/docs/verification/evidence/BUG-002/*.txt
+      - desktop/macos/docs/verification/evidence/BUG-015/*.txt
+      - desktop/macos/docs/verification/evidence/BUG-013/*.txt
+    # No publishing block on purpose. This workflow reports nowhere and ships nothing.

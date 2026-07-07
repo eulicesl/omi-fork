@@ -249,6 +249,14 @@ These headless XCTests are the subset runnable in CI without a human:
 - **Where to upload:** `desktop/macos/docs/verification/evidence/BUG-XXX/` (and the combined `xctest-run.txt`). Attach the log to the filled `REPORT-TEMPLATE.md`.
 - **Note:** a headless SwiftPM test host has no GUI/TCC context. The DB/file tests run fine (they use Application Support paths); if any test unexpectedly needs entitlements or a signed host, fall back to running it from the app's test scheme on a logged-in Mac.
 
+### Ready-to-run: a drafted verification-only Codemagic workflow
+
+Because the Linux session cannot run Swift/Xcode (see `XCTEST-RESULTS.md`), the executable path is a standalone workflow: **`desktop/macos/docs/verification/codemagic-xctest-workflow.yaml`**, workflow id **`omi-desktop-xctest-verify`**.
+- **Runner/toolchain:** `mac_mini_m2`, `xcode: 16.4` (mirrors `omi-desktop-swift-release`); `working_directory: desktop/macos`; SwiftPM cache.
+- **Kept standalone** (not merged into the 2860-line production `codemagic.yaml`) to avoid any risk to the release pipeline; the file's header explains the two ways to wire it (point Codemagic's config path at it, or paste the single `omi-desktop-xctest-verify:` block under the root `workflows:`).
+- **What it does:** `brew install webp` → `swift package resolve` → run each of the 4 classes with `xcrun swift test --package-path Desktop --filter <Class>` (note the corrected path — `Desktop`, since `Package.swift` is at `desktop/macos/Desktop/`) → write per-bug logs to `evidence/BUG-XXX/` → a summary step that classifies each as *compiled+test-failed (reproduced)* / *COMPILE-ERROR (test-draft issue)* / *compiled+no-fail (unexpected pass → re-audit)*. Test steps use `set +e` so a red test never fails the pipeline; logs are the deliverable and are uploaded as artifacts. No signing, no publishing, manual trigger only.
+- **No auto-trigger:** `triggering: {}` — start it from the Codemagic UI or REST API.
+
 ## Final Recommendation
 
 - **First XCTest verification batch (run now on macOS, no seams, no production changes):** BUG-015 (FTS throw — cleanest), BUG-001 (data-loss — highest impact), BUG-013 (rebuild no-op). These three are the fastest, lowest-risk confirmations and cover a Critical data-loss bug and two High bugs. Add BUG-002 (cross-user leak) as the fourth once its two possible failure modes are observed. Confirm BUG-014's runtime path, then create its file.
