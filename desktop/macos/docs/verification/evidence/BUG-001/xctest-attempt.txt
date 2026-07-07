@@ -1,0 +1,13 @@
+# Attempted on: 2026-07-07T00:41:02Z
+# Host: Linux 6.18.5 x86_64  (Linux container — no macOS/Swift toolchain)
+# Commit under test: f327a2a630345311ec40db7d96c9c9975baa6461
+# Command:
+xcrun swift test --package-path desktop/macos --filter RewindEmptyImagePathDeletionTests
+# Result:
+/bin/bash: line 31: xcrun: command not found
+exit=127 -> xcrun: command not found (no Xcode/Swift toolchain on this Linux host)
+# Fallback attempt:
+swift test --filter RewindEmptyImagePathDeletionTests
+/bin/bash: line 34: swift: command not found
+exit=127 -> swift: command not found (no Swift toolchain on this Linux host)
+# Conclusion: RUN BLOCKED — no macOS runner. Not compiled, not executed.
