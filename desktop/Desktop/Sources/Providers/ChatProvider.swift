@@ -496,6 +496,14 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
     @Published var isClearing = false
     @Published var errorMessage: String?
 
+    /// Every tool name the bridge fired a `toolActivity` "started" event for
+    /// during the current `sendMessage` run (reset at the start of each run).
+    /// This is the authoritative "did the agent take action" signal for the
+    /// Execute verification gate — `pill.aiMessage` only holds the final
+    /// assistant message, which is usually tool-free "Done" text, so reading
+    /// tool calls off it under-counts and false-negatives the gate.
+    @Published private(set) var invokedToolNames: [String] = []
+
     /// Monotonically-incremented id for each sendMessage / stopAgent cycle.
     /// Watchdog tasks capture their gen and only reset state if it still
     /// matches — so a watchdog fired by a stuck send #N won't cancel a
@@ -2603,6 +2611,7 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         // Analytics: track timing and tool usage
         let queryStartTime = Date()
         var toolNames: [String] = []
+        invokedToolNames = []  // reset the gate's per-run tool signal
         var toolStartTimes: [String: Date] = [:]
         var sqlRowsReturned = 0
         var sqlQueryCount = 0
@@ -2682,6 +2691,7 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
                     )
                     if status == "started" {
                         toolNames.append(name)
+                        self?.invokedToolNames.append(name)
                         toolStartTimes[name] = Date()
                         if (name.contains("browser") || name.contains("playwright")) {
                             let token = UserDefaults.standard.string(forKey: "playwrightExtensionToken") ?? ""

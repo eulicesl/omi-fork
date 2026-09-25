@@ -57,6 +57,11 @@ final class AgentPill: ObservableObject, Identifiable {
     @Published var aiMessage: ChatMessage?
     @Published var completedAt: Date?
     @Published var suggestedFollowUps: [String] = []
+    /// Tool names the main run invoked, snapshotted from the provider right
+    /// after `sendMessage` returns (before the P8 verification turn fires its
+    /// own tool). The verification gate reads this rather than `aiMessage`,
+    /// which only holds the final — usually tool-free — assistant message.
+    @Published var invokedToolNames: [String] = []
     /// Number of attempts so far (1 on first run, 2 on a single retry). Used
     /// by the pill UI to surface "Retrying… (2/2)" and by analytics.
     @Published var attemptCount: Int = 0
@@ -658,10 +663,15 @@ final class AgentPillsManager: ObservableObject {
             return .retry(Self.isRateLimitErrorText(errText) ? .rateLimited : .transient)
         }
 
-        let invoked = Self.invokedToolNames(from: pill.aiMessage)
+        // Snapshot the main run's tool calls from the provider's authoritative
+        // per-run list *before* the verification turn fires its own tool. The
+        // provider tracks every toolActivity event; pill.aiMessage only holds
+        // the final assistant message (usually tool-free "Done" text), which
+        // false-negatives the gate on real file/send actions.
+        pill.invokedToolNames = provider.invokedToolNames
         let gate = ExecuteVerificationGate.evaluate(
             actionClass: pill.actionClass,
-            invokedToolNames: invoked
+            invokedToolNames: pill.invokedToolNames
         )
         switch gate {
         case .unverified:
@@ -727,19 +737,6 @@ final class AgentPillsManager: ObservableObject {
             return nil
         }
         return ProactiveTaskExecute.parseVerification(reply.text)
-    }
-
-    /// Walk a finished AI message's content blocks and pull out every
-    /// `.toolCall` name. Used by the verification gate.
-    static func invokedToolNames(from message: ChatMessage?) -> [String] {
-        guard let message else { return [] }
-        var names: [String] = []
-        for block in message.contentBlocks {
-            if case .toolCall(_, let name, _, _, _, _) = block {
-                names.append(name)
-            }
-        }
-        return names
     }
 
     /// Heuristic for whether a bridge / network / OOM error is worth a retry.
@@ -851,7 +848,7 @@ final class AgentPillsManager: ObservableObject {
             attemptCount: pill.attemptCount,
             actionClass: pill.actionClass == .actionable ? "actionable" : "research",
             isExecuteMode: pill.isExecuteMode,
-            invokedToolNames: Self.invokedToolNames(from: pill.aiMessage),
+            invokedToolNames: pill.invokedToolNames,
             verificationVerified: pill.verification?.verified,
             verificationEvidence: pill.verification?.evidence,
             completedAt: pill.completedAt.map { formatter.string(from: $0) },
@@ -946,11 +943,11 @@ final class AgentPillsManager: ObservableObject {
             // Sprint 2 / P2 — verification gate. Demote to `.failed` if the
             // pill is actionable but no write/send/script tool fired. We
             // already retried once in the spawn loop, so reaching here means
-            // every attempt was unverified.
-            let invoked = Self.invokedToolNames(from: pill.aiMessage)
+            // every attempt was unverified. Uses the tool list snapshotted in
+            // evaluateAttempt (the main run's tools), not pill.aiMessage.
             let gate = ExecuteVerificationGate.evaluate(
                 actionClass: pill.actionClass,
-                invokedToolNames: invoked
+                invokedToolNames: pill.invokedToolNames
             )
             switch gate {
             case .verified:
